@@ -1,0 +1,42 @@
+{
+  "name": "@pizza-to-the-polls/democracy-delicious-agent",
+  "version": "0.1.0",
+  "description": "Autonomous coding agent orchestrator for Pizza to the Polls repositories",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "democracy-agent": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "agent": "tsx src/cli.ts",
+    "doctor": "tsx src/cli.ts doctor",
+    "post-instructions": "tsx src/cli.ts post-instructions",
+    "test": "node --import tsx --test 'src/**/*.test.ts'"
+  },
+  "keywords": [
+    "pizza-to-the-polls",
+    "agent",
+    "pi",
+    "openrouter"
+  ],
+  "author": "Pizza to the Polls",
+  "license": "MIT",
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.83.0",
+    "@earendil-works/pi-coding-agent": "^0.83.0",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.5",
+    "js-yaml": "^4.1.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -1,0 +1,41 @@
+#!/usr/bin/env node
+import { Command } from "commander";
+import { ZodError } from "zod";
+import { loadConfig } from "./config.js";
+import { runDoctor } from "./commands/doctor.js";
+import { postBootstrapInstructions } from "./commands/post-instructions.js";
+
+const program = new Command();
+program
+  .name("democracy-agent")
+  .description("Autonomous development orchestrator for Pizza to the Polls")
+  .version("0.1.0")
+  .option("-c, --config <path>", "path to agent YAML configuration");
+
+program
+  .command("doctor")
+  .description("verify credentials, permissions, services, and local setup")
+  .action(async () => {
+    const config = await loadConfig(program.opts<{ config?: string }>().config);
+    process.exitCode = await runDoctor(config);
+  });
+
+program
+  .command("post-instructions")
+  .description("create the bootstrap instructions issue using the GitHub App")
+  .action(async () => {
+    const config = await loadConfig(program.opts<{ config?: string }>().config);
+    await postBootstrapInstructions(config);
+  });
+
+try {
+  await program.parseAsync();
+} catch (error) {
+  if (error instanceof ZodError) {
+    console.error("Invalid configuration:");
+    for (const issue of error.issues) console.error(`- ${issue.path.join(".")}: ${issue.message}`);
+  } else {
+    console.error(error instanceof Error ? error.message : String(error));
+  }
+  process.exitCode = 1;
+}

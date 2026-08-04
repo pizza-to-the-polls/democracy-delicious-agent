@@ -1,0 +1,26 @@
+github:
+  organization: pizza-to-the-polls
+  appId: 4486291
+  installationId: 151233951
+  projectNumber: 1
+  repositories:
+    - pizza-to-the-polls/pizzabase
+    - pizza-to-the-polls/polls.pizza
+    - pizza-to-the-polls/democracy-delicious-agent
+
+paths:
+  githubPrivateKey: ~/.config/democracy-delicious/github-app.pem
+  environmentFile: ~/.config/democracy-delicious/env
+  workspace: ~/PizzaAgent
+
+budget:
+  dailyUsd: 15
+  autonomousStopUsd: 350
+  absoluteUsd: 400
+
+limits:
+  globalConcurrency: 1
+  issueWallClockMinutes: 45
+  maxModelTurns: 20
+  maxTestRuns: 4
+  maxRepairCycles: 1

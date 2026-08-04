@@ -15,7 +15,7 @@ export async function postBootstrapInstructions(config: AgentConfig): Promise<vo
   const client = new GitHubClient(auth);
   const issue = await client.createIssue(
     `${config.github.organization}/democracy-delicious-agent`,
-    "Bootstrap the Democracy Delicious Agent on the pizzaagent account",
+    "Bootstrap the Democracy Delicious Agent on the local orchestrator account",
     body,
   );
   console.log(`Created bootstrap issue #${issue.number}: ${issue.html_url}`);

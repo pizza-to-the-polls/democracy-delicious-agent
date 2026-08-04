@@ -2,7 +2,7 @@
 
 A cost-conscious, auditable autonomous development orchestrator for Pizza to the Polls.
 
-The project is under active bootstrap. The first implemented capability is `doctor`, which verifies the dedicated machine account's credentials and permission boundaries before any autonomous development is enabled.
+The project is under active bootstrap. The first implemented capability is `doctor`, which verifies the local credentials and permission boundaries before any autonomous development is enabled.
 
 ## Architecture principles
 
@@ -17,8 +17,8 @@ The project is under active bootstrap. The first implemented capability is `doct
 
 ## Prerequisites
 
-- Dedicated standard macOS account: `pizzaagent`
 - Node.js 22
+- A dedicated agent workspace containing clean clones and worktrees
 - GitHub App installed on the three approved repositories
 - Dedicated OpenRouter API key with a provider-side spending limit
 - Protected local credential files described below
@@ -32,7 +32,7 @@ These files are intentionally outside the repository:
 ~/.config/democracy-delicious/env
 ```
 
-Both must be owned by `pizzaagent` and mode `600`. The directory must be mode `700`.
+Both must be owned by the macOS account running the orchestrator and mode `600`. The directory must be mode `700`.
 
 The environment file format is:
 

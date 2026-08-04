@@ -1,6 +1,6 @@
 ## Purpose
 
-Set up and verify the dedicated `pizzaagent` macOS account for the Democracy Delicious Agent. This issue is the shared handoff document for the human operator and future agent sessions.
+Set up and verify the Democracy Delicious Agent under the existing macOS account, using logical workspace and credential isolation. This issue is the shared handoff document for the human operator and future agent sessions.
 
 > Never paste API keys, GitHub App private keys, installation tokens, or environment-file contents into this issue or an agent conversation.
 
@@ -17,13 +17,13 @@ Set up and verify the dedicated `pizzaagent` macOS account for the Democracy Del
 
 ## One-time setup as the human operator
 
-The macOS account is `pizzaagent`. It must remain a standard, non-admin account for ordinary operation.
+The orchestrator runs under the existing macOS account. Isolation comes from narrowly scoped credentials, agent-owned clean clones/worktrees, constrained worker tools, and stripped worker environments.
 
-The following files should already exist and be owned by `pizzaagent`:
+The following protected files should exist under that account:
 
 ```text
-/Users/pizzaagent/.config/democracy-delicious/github-app.pem
-/Users/pizzaagent/.config/democracy-delicious/env
+~/.config/democracy-delicious/github-app.pem
+~/.config/democracy-delicious/env
 ```
 
 The environment file contains the dedicated, spending-limited OpenRouter key:
@@ -42,9 +42,9 @@ chmod 600 ~/.config/democracy-delicious/github-app.pem
 chmod 600 ~/.config/democracy-delicious/env
 ```
 
-## Setup while logged in as `pizzaagent`
+## Setup under the existing macOS account
 
-Open Terminal in the `pizzaagent` account:
+If this repository is not already cloned:
 
 ```bash
 mkdir -p ~/Projects
@@ -52,6 +52,13 @@ cd ~/Projects
 
 git clone https://github.com/pizza-to-the-polls/democracy-delicious-agent.git
 cd democracy-delicious-agent
+```
+
+If it is already cloned:
+
+```bash
+cd ~/Projects/democracy-delicious-agent
+git pull --ff-only
 ```
 
 Install Node 22 using an existing preferred version manager. If no version manager is installed, install `nvm` from its official repository and then run:
@@ -99,28 +106,29 @@ npm run agent -- doctor
 2. Never use `cat`, debugging output, or shell tracing on secret files.
 3. Never pass the GitHub App private key or installation token to a Pi coding worker.
 4. The orchestrator alone mints and refreshes short-lived GitHub installation tokens.
-5. Pi workers receive no `gh` login, AWS credential, or GitHub token.
-6. Rotate a credential immediately if its value appears in logs, GitHub, chat, or a model context.
-7. Keep production credentials entirely absent from the `pizzaagent` account.
+5. Pi workers receive no `gh` login, AWS credential, GitHub token, or inherited personal environment.
+6. Workers operate only in agent-owned clean worktrees, never the human's active development clones.
+7. Rotate a credential immediately if its value appears in logs, GitHub, chat, or a model context.
+8. Strip AWS and production credentials from every worker subprocess, even if they exist in the human account.
 
 ## Troubleshooting
 
 ### `GitHub private key ... missing or unreadable`
 
-From an administrator account:
+Run under the orchestrator account:
 
 ```bash
-sudo chown pizzaagent:staff /Users/pizzaagent/.config/democracy-delicious/github-app.pem
-sudo chmod 600 /Users/pizzaagent/.config/democracy-delicious/github-app.pem
+chown "$(id -un)":staff ~/.config/democracy-delicious/github-app.pem
+chmod 600 ~/.config/democracy-delicious/github-app.pem
 ```
 
 ### `OPENROUTER_API_KEY is not set`
 
-Create or repair the protected environment file from an administrator account without echoing the value into shell history. A safe interactive method is:
+Create or repair the protected environment file without echoing the value into shell history. A safe interactive method is:
 
 ```bash
-sudo -u pizzaagent nano /Users/pizzaagent/.config/democracy-delicious/env
-sudo chmod 600 /Users/pizzaagent/.config/democracy-delicious/env
+nano ~/.config/democracy-delicious/env
+chmod 600 ~/.config/democracy-delicious/env
 ```
 
 The file needs one line:
@@ -139,14 +147,15 @@ It must include exactly the three approved repositories listed above.
 
 ## Completion checklist
 
-- [ ] Operational clone exists under `/Users/pizzaagent/Projects/`
+- [ ] Operational clone exists under `~/Projects/`
+- [ ] Dedicated workspace exists at `~/PizzaAgent/`
 - [ ] Node 22 is active
 - [ ] `npm ci` succeeds
 - [ ] `npm test` succeeds
 - [ ] `npm run build` succeeds
 - [ ] `npm run agent -- doctor` has zero failures
 - [ ] Doctor output is posted here with all token-like values omitted
-- [ ] Human confirms `pizzaagent` has no AWS or production credentials
+- [ ] Human confirms worker subprocesses will strip AWS, GitHub, and production credentials
 
 ## Next engineering milestone
 

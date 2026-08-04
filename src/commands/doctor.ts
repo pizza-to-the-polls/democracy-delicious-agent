@@ -118,6 +118,19 @@ export async function runDoctor(config: AgentConfig): Promise<number> {
       status: (permissions & 0o077) === 0 ? "pass" : "fail",
       detail: `${environmentPath} mode ${permissions.toString(8)}`,
     });
+    if (info.uid !== process.getuid?.()) {
+      results.push({
+        name: "Environment file ownership",
+        status: "fail",
+        detail: `${environmentPath} is not owned by the orchestrator account`,
+      });
+    } else {
+      results.push({
+        name: "Environment file ownership",
+        status: "pass",
+        detail: "owned by the orchestrator account",
+      });
+    }
   } catch {
     results.push({ name: "Environment file", status: "fail", detail: `${environmentPath} is missing` });
   }

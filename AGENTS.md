@@ -7,6 +7,8 @@ This repository implements the autonomous development orchestrator for Pizza to 
 - Never print, read into model context, commit, or log secrets.
 - Never expose the GitHub App PEM, installation tokens, OpenRouter key, AWS credentials, or environment-file contents to coding workers.
 - Never add production credentials or deployment authority.
+- Strip personal, AWS, GitHub, and production credentials from every coding-worker subprocess.
+- Coding workers may access only agent-owned clean worktrees, never the human's active development clones.
 - Never permit a coding model to merge an umbrella feature PR into `master`.
 - Fail closed on missing configuration, authentication, budget, policy, or repository-boundary checks.
 - Keep GitHub and Git mutation in deterministic orchestrator code, not model tools.

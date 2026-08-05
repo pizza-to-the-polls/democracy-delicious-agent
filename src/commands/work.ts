@@ -101,24 +101,30 @@ export async function runWork(config: AgentConfig, options: {
     console.log(`Worktree: ${workspace.worktreePath}`);
     console.log(`Branch: ${workspace.branch}`);
 
-    const planner = await runAgentSession({
-      config,
-      role: "planner",
-      cwd: workspace.worktreePath,
-      prompt: `${issuePrompt(issue, comments)}\n\nCreate a concrete implementation plan. Inspect the repository and any approved read-only examples copied into .agent-inputs/. Do not modify files. Include root cause, files to change, real-fixture strategy, compatibility decision, checks, and risks.`,
-      tools: ["read", "grep", "find", "ls"],
-      systemAppend: `${SAFETY_PROMPT}\nThis is a read-only planning phase.`,
-      sessionName: `${options.repository.replace("/", "-")}-${issue.number}-plan`,
-    });
-    const spentBeforePlan = Object.values(state.costs).reduce((sum, value) => sum + value, 0);
-    if (spentBeforePlan + planner.cost > config.budget.dailyUsd) {
-      throw new Error(`Issue cost $${(spentBeforePlan + planner.cost).toFixed(4)} exceeds configured daily budget $${config.budget.dailyUsd.toFixed(2)}`);
+    let plan = options.resume && state.plan ? state.plan : undefined;
+    if (!plan) {
+      const planner = await runAgentSession({
+        config,
+        role: "planner",
+        cwd: workspace.worktreePath,
+        prompt: `${issuePrompt(issue, comments)}\n\nCreate a concrete implementation plan. Inspect the repository and any approved read-only examples copied into .agent-inputs/. Do not modify files. Product clarifications in the issue discussion are approved requirements and override earlier or conflicting suggestions. Include root cause, files to change, real-fixture strategy, compatibility decision, checks, and risks.`,
+        tools: ["read", "grep", "find", "ls"],
+        systemAppend: `${SAFETY_PROMPT}\nThis is a read-only planning phase.`,
+        sessionName: `${options.repository.replace("/", "-")}-${issue.number}-plan`,
+      });
+      const spentBeforePlan = Object.values(state.costs).reduce((sum, value) => sum + value, 0);
+      if (spentBeforePlan + planner.cost > config.budget.dailyUsd) {
+        throw new Error(`Issue cost $${(spentBeforePlan + planner.cost).toFixed(4)} exceeds configured daily budget $${config.budget.dailyUsd.toFixed(2)}`);
+      }
+      plan = planner.text;
+      state = await store.save({ ...state, phase: "planned", plan, costs: { ...state.costs, planner: planner.cost } });
+      const planPath = resolve(expandHome(config.paths.workspace), "state", `${options.repository.replace("/", "--")}-${issue.number}-plan.md`);
+      await writeFile(planPath, `${plan}\n`, { mode: 0o600 });
+      console.log(`Planner cost: $${planner.cost.toFixed(4)}`);
+    } else {
+      console.log("Reusing saved plan from recovery journal.");
     }
-    state = await store.save({ ...state, phase: "planned", plan: planner.text, costs: { ...state.costs, planner: planner.cost } });
-    const planPath = resolve(expandHome(config.paths.workspace), "state", `${options.repository.replace("/", "--")}-${issue.number}-plan.md`);
-    await writeFile(planPath, `${planner.text}\n`, { mode: 0o600 });
-    console.log(`\nPLAN\n${planner.text}\n`);
-    console.log(`Planner cost: $${planner.cost.toFixed(4)}`);
+    console.log(`\nPLAN\n${plan}\n`);
     if (options.dryRun) {
       console.log("Dry run complete; no files were changed by the agent.");
       return 0;
@@ -129,7 +135,7 @@ export async function runWork(config: AgentConfig, options: {
       config,
       role: "executor",
       cwd: workspace.worktreePath,
-      prompt: `${issuePrompt(issue, comments)}\n\n# Approved plan\n${planner.text}\n\nImplement this issue completely. You may inspect approved read-only examples under .agent-inputs/, but do not modify or commit that directory; modify project files only elsewhere in the worktree. Add realistic regression tests. The orchestrator will run all approved checks after you finish; do not attempt shell commands.`,
+      prompt: `${issuePrompt(issue, comments)}\n\n# Planning notes\n${plan}\n\nImplement this issue completely. Product clarifications in the issue discussion are approved requirements and override any conflicting planning note. You may inspect approved read-only examples under .agent-inputs/, but do not modify or commit that directory; modify project files only elsewhere in the worktree. Add realistic regression tests. The orchestrator will run all approved checks after you finish; do not attempt shell commands.`,
       tools: ["read", "grep", "find", "ls", "edit", "write"],
       systemAppend: `${SAFETY_PROMPT}\nImplement the approved plan. You cannot use arbitrary shell commands; the orchestrator runs checks after you finish.`,
       sessionName: `${options.repository.replace("/", "-")}-${issue.number}-implement`,
@@ -154,7 +160,7 @@ export async function runWork(config: AgentConfig, options: {
       config,
       role: "reviewer",
       cwd: workspace.worktreePath,
-      prompt: `${issuePrompt(issue, comments)}\n\n# Plan\n${planner.text}\n\n# Git status\n${currentStatus}\n\n# Diff\n${currentDiff}\n\n# Check results\n${checkText}\n\nIndependently review correctness, binary parser bounds, real-fixture realism, API compatibility, heuristic honesty, and tests. End with exactly VERDICT: ACCEPT or VERDICT: REJECT. A failed check requires rejection.`,
+      prompt: `${issuePrompt(issue, comments)}\n\n# Planning notes\n${plan}\n\n# Git status\n${currentStatus}\n\n# Diff\n${currentDiff}\n\n# Check results\n${checkText}\n\nIndependently review correctness, binary parser bounds, real-fixture realism, API compatibility, heuristic honesty, and tests. End with exactly VERDICT: ACCEPT or VERDICT: REJECT. A failed check requires rejection.`,
       tools: ["read", "grep", "find", "ls"],
       systemAppend: `${SAFETY_PROMPT}\nThis is an independent read-only review. Be skeptical and concise.`,
       sessionName: `${options.repository.replace("/", "-")}-${issue.number}-review`,

@@ -111,7 +111,13 @@ export async function runWork(config: AgentConfig, options: {
       issue.title,
       approvedInputPaths(options.repository, issue.number),
     );
-    state = await store.save({ ...state, phase: "worktree-ready", worktreePath: workspace.worktreePath, branch: workspace.branch });
+    const priorPhase = state.phase;
+    state = await store.save({
+      ...state,
+      phase: priorPhase === "created" || priorPhase === "failed" ? "worktree-ready" : priorPhase,
+      worktreePath: workspace.worktreePath,
+      branch: workspace.branch,
+    });
     console.log(`Worktree: ${workspace.worktreePath}`);
     console.log(`Branch: ${workspace.branch}`);
 
@@ -145,7 +151,7 @@ export async function runWork(config: AgentConfig, options: {
     }
 
     await installDependencies(config, options.repository, workspace.worktreePath);
-    const resumingRepair = options.resume && state.phase === "needs-repair" && Boolean(state.review);
+    const resumingRepair = options.resume && priorPhase === "needs-repair" && Boolean(state.review);
     if (resumingRepair) {
       const usage = await getOpenRouterUsage();
       assertBudgetAvailable(usage, config.budget, 2);

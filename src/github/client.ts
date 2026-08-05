@@ -59,6 +59,40 @@ export class GitHubClient {
     return data.organization?.projectV2 ?? null;
   }
 
+  async getIssue(repository: string, number: number): Promise<{
+    number: number;
+    title: string;
+    body: string | null;
+    state: string;
+    html_url: string;
+    labels: Array<{ name: string }>;
+  }> {
+    const response = await this.request(`https://api.github.com/repos/${repository}/issues/${number}`);
+    return (await response.json()) as {
+      number: number;
+      title: string;
+      body: string | null;
+      state: string;
+      html_url: string;
+      labels: Array<{ name: string }>;
+    };
+  }
+
+  async listIssueComments(repository: string, number: number): Promise<Array<{
+    id: number;
+    body: string;
+    user: { login: string };
+    html_url: string;
+  }>> {
+    const response = await this.request(`https://api.github.com/repos/${repository}/issues/${number}/comments?per_page=100`);
+    return (await response.json()) as Array<{
+      id: number;
+      body: string;
+      user: { login: string };
+      html_url: string;
+    }>;
+  }
+
   async createIssue(repository: string, title: string, body: string, labels: string[] = []): Promise<{
     number: number;
     html_url: string;

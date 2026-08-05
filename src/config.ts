@@ -6,6 +6,22 @@ import yaml from "js-yaml";
 import { z } from "zod";
 import dotenv from "dotenv";
 
+const thinkingLevelSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
+const modelRoleSchema = z.object({
+  id: z.string().min(1),
+  thinking: thinkingLevelSchema,
+});
+
+const repositoryConfigSchema = z.object({
+  nodeVersion: z.string().min(1),
+  testDatabasePrefix: z.string().regex(/^[a-zA-Z0-9_]+$/).optional(),
+  checks: z.object({
+    targeted: z.string().min(1).optional(),
+    full: z.array(z.string().min(1)).min(1),
+  }),
+});
+
 const configSchema = z.object({
   github: z.object({
     organization: z.string().min(1),
@@ -19,6 +35,12 @@ const configSchema = z.object({
     environmentFile: z.string().min(1),
     workspace: z.string().min(1),
   }),
+  models: z.object({
+    planner: modelRoleSchema,
+    executor: modelRoleSchema,
+    reviewer: modelRoleSchema,
+  }),
+  repositories: z.record(z.string(), repositoryConfigSchema),
   budget: z.object({
     dailyUsd: z.number().positive(),
     autonomousStopUsd: z.number().positive(),

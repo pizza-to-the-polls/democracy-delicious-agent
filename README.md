@@ -66,7 +66,21 @@ npm run agent -- doctor
 ```bash
 npm run agent -- doctor
 npm run agent -- --help
+
+# Read-only planning trial for an approved issue
+npm run agent -- work \
+  --repo pizza-to-the-polls/pizzabase \
+  --issue 152 \
+  --dry-run
+
+# Implement, run configured checks, and perform independent review locally
+npm run agent -- work \
+  --repo pizza-to-the-polls/pizzabase \
+  --issue 152 \
+  --resume
 ```
+
+`work` requires an open issue carrying `agent:ready`. It creates a clean clone and worktree under `~/PizzaAgent`; it never uses the human's active application clones. Push, PR creation, merging, and deployment are intentionally disabled in this milestone because the application repositories still deploy every non-master branch to shared staging.
 
 Maintainer-only bootstrap helper:
 
@@ -90,14 +104,16 @@ Implemented:
 - protected environment loading
 - configuration validation
 - system `doctor`
+- isolated clean clones and issue worktrees
+- explicit OpenRouter planner/executor/reviewer models through the Pi SDK
+- dry-run planning
+- local implementation, configured checks, independent review, limits, and a recovery journal
 - bootstrap issue template
 
 Not enabled yet:
 
-- Project scheduling
-- worktree creation
-- Pi execution
-- model routing
+- Project queue scheduling and continuous daemon mode
+- automatic repair after reviewer rejection
 - child PR creation or merging
 - staging deployment
 

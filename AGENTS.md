@@ -13,6 +13,8 @@ This repository implements the autonomous development orchestrator for Pizza to 
 - Fail closed on missing configuration, authentication, budget, policy, or repository-boundary checks.
 - Keep GitHub and Git mutation in deterministic orchestrator code, not model tools.
 - Default to read-only and dry-run behavior until a capability is deliberately implemented and tested.
+- Keep push, PR merge, and deployment disabled until application CI no longer deploys arbitrary agent branches to shared staging.
+- Explicit task inputs may be copied read-only into `.agent-inputs/`; never commit that directory.
 
 ## Development
 

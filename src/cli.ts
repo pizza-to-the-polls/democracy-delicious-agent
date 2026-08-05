@@ -4,6 +4,7 @@ import { ZodError } from "zod";
 import { loadConfig } from "./config.js";
 import { runDoctor } from "./commands/doctor.js";
 import { postBootstrapInstructions } from "./commands/post-instructions.js";
+import { runWork } from "./commands/work.js";
 
 const program = new Command();
 program
@@ -18,6 +19,23 @@ program
   .action(async () => {
     const config = await loadConfig(program.opts<{ config?: string }>().config);
     process.exitCode = await runDoctor(config);
+  });
+
+program
+  .command("work")
+  .description("plan or implement one approved GitHub issue in an isolated worktree")
+  .requiredOption("--repo <owner/name>", "approved GitHub repository")
+  .requiredOption("--issue <number>", "GitHub issue number", (value) => Number.parseInt(value, 10))
+  .option("--dry-run", "plan only; do not let the agent modify repository files", false)
+  .option("--resume", "resume/reconcile existing local issue state", false)
+  .action(async (options: { repo: string; issue: number; dryRun: boolean; resume: boolean }) => {
+    const config = await loadConfig(program.opts<{ config?: string }>().config);
+    process.exitCode = await runWork(config, {
+      repository: options.repo,
+      issueNumber: options.issue,
+      dryRun: options.dryRun,
+      resume: options.resume,
+    });
   });
 
 program

@@ -13,6 +13,36 @@ paths:
   environmentFile: ~/.config/democracy-delicious/env
   workspace: ~/PizzaAgent
 
+models:
+  planner:
+    id: openai/gpt-5.4-mini
+    thinking: high
+  executor:
+    id: deepseek/deepseek-v4-pro
+    thinking: medium
+  reviewer:
+    id: deepseek/deepseek-v4-pro
+    thinking: high
+
+repositories:
+  pizza-to-the-polls/pizzabase:
+    nodeVersion: "22"
+    testDatabasePrefix: pizzabase_agent
+    checks:
+      targeted: npm test -- --runTestsByPath src/lib/exif.test.ts src/controller/UploadsController.test.ts
+      full:
+        - npm run prettier
+        - npm run lint
+        - npx tsc --noEmit
+        - npm test
+  pizza-to-the-polls/polls.pizza:
+    nodeVersion: "20"
+    checks:
+      full:
+        - npm run prettier
+        - npm run lint
+        - npm test
+
 budget:
   dailyUsd: 15
   autonomousStopUsd: 350

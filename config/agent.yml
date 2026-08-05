@@ -29,6 +29,7 @@ repositories:
     nodeVersion: "22"
     testDatabasePrefix: pizzabase_agent
     checks:
+      fix: npm run fix
       targeted: npm test -- --runTestsByPath src/lib/exif.test.ts src/controller/UploadsController.test.ts
       full:
         - npm run prettier
@@ -38,6 +39,7 @@ repositories:
   pizza-to-the-polls/polls.pizza:
     nodeVersion: "20"
     checks:
+      fix: npm run fix
       full:
         - npm run prettier
         - npm run lint

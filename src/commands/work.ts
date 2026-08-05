@@ -77,6 +77,7 @@ export async function runWork(config: AgentConfig, options: {
   issueNumber: number;
   dryRun: boolean;
   resume: boolean;
+  reviewOnly: boolean;
 }): Promise<number> {
   if (!config.github.repositories.includes(options.repository)) throw new Error(`Repository is not approved: ${options.repository}`);
   const initialUsage = await getOpenRouterUsage();
@@ -152,7 +153,10 @@ export async function runWork(config: AgentConfig, options: {
 
     await installDependencies(config, options.repository, workspace.worktreePath);
     const resumingRepair = options.resume && priorPhase === "needs-repair" && Boolean(state.review);
-    if (resumingRepair) {
+    if (options.reviewOnly) {
+      if (!options.resume) throw new Error("--review-only requires --resume");
+      console.log("Review-only recovery: preserving existing worktree changes.");
+    } else if (resumingRepair) {
       const usage = await getOpenRouterUsage();
       assertBudgetAvailable(usage, config.budget, 2);
       const repair = await runAgentSession({
@@ -208,9 +212,9 @@ export async function runWork(config: AgentConfig, options: {
       prompt: `${issuePrompt(issue, comments)}\n\n# Planning notes\n${plan}\n\n# Git status\n${currentStatus}\n\n# Diff\n${currentDiff}\n\n# Check results\n${checkText}\n\nIndependently review correctness, binary parser bounds, metadata-preserving fixture realism, API-contract documentation, heuristic honesty, and tests. Product clarifications in the issue discussion are requirements; do not reject merely because they extend the original endpoint. End with exactly VERDICT: ACCEPT or VERDICT: REJECT. A failed check requires rejection.`,
       tools: ["read", "grep", "find", "ls"],
       systemAppend: `${SAFETY_PROMPT}\nThis is an independent read-only review. Be skeptical and concise.`,
-      sessionName: `${options.repository.replace("/", "-")}-${issue.number}-${resumingRepair ? "rereview" : "review"}`,
+      sessionName: `${options.repository.replace("/", "-")}-${issue.number}-${resumingRepair || options.reviewOnly ? "rereview" : "review"}`,
     });
-    state = await store.save({ ...state, phase: reviewAccepted(reviewer.text) && checksPassed ? "reviewed" : "needs-repair", review: reviewer.text, costs: { ...state.costs, [resumingRepair ? "rereviewer" : "reviewer"]: reviewer.cost } });
+    state = await store.save({ ...state, phase: reviewAccepted(reviewer.text) && checksPassed ? "reviewed" : "needs-repair", review: reviewer.text, costs: { ...state.costs, [resumingRepair || options.reviewOnly ? "rereviewer" : "reviewer"]: reviewer.cost } });
     console.log(`\nREVIEW\n${reviewer.text}\n`);
     console.log(`Reviewer cost: $${reviewer.cost.toFixed(4)}`);
     const authoritativeUsage = await getOpenRouterUsage();

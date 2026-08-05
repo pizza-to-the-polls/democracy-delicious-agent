@@ -36,6 +36,12 @@ export async function runChecks(options: {
     ? [repoConfig.checks.targeted]
     : repoConfig.checks.full;
   const results: ProcessResult[] = [];
+  if (repoConfig.checks.fix) {
+    const wrappedFix = `source "$HOME/.nvm/nvm.sh" && nvm use ${repoConfig.nodeVersion} >/dev/null && ${repoConfig.checks.fix}`;
+    const fixResult = await runShell(wrappedFix, { cwd: options.cwd, env, timeoutMs: 20 * 60_000 });
+    results.push(fixResult);
+    if (fixResult.exitCode !== 0) return results;
+  }
   for (const check of checks) {
     const wrapped = `source "$HOME/.nvm/nvm.sh" && nvm use ${repoConfig.nodeVersion} >/dev/null && ${check}`;
     const result = await runShell(wrapped, { cwd: options.cwd, env, timeoutMs: 20 * 60_000 });

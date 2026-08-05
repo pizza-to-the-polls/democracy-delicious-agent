@@ -17,6 +17,7 @@ const repositoryConfigSchema = z.object({
   nodeVersion: z.string().min(1),
   testDatabasePrefix: z.string().regex(/^[a-zA-Z0-9_]+$/).optional(),
   checks: z.object({
+    fix: z.string().min(1).optional(),
     targeted: z.string().min(1).optional(),
     full: z.array(z.string().min(1)).min(1),
   }),

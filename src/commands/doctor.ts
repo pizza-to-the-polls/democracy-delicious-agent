@@ -5,6 +5,7 @@ import type { AgentConfig } from "../config.js";
 import { expandHome } from "../config.js";
 import { GitHubAppAuth } from "../github/auth.js";
 import { GitHubClient } from "../github/client.js";
+import { getOpenRouterUsage } from "../budget.js";
 
 interface CheckResult {
   name: string;
@@ -32,18 +33,12 @@ async function checkPrivateKey(path: string): Promise<CheckResult> {
 }
 
 async function checkOpenRouter(): Promise<CheckResult> {
-  const key = process.env.OPENROUTER_API_KEY;
-  if (!key) return { name: "OpenRouter", status: "fail", detail: "OPENROUTER_API_KEY is not set in the protected environment file" };
+  if (!process.env.OPENROUTER_API_KEY) return { name: "OpenRouter", status: "fail", detail: "OPENROUTER_API_KEY is not set in the protected environment file" };
   try {
-    const response = await fetch("https://openrouter.ai/api/v1/key", {
-      headers: { Authorization: `Bearer ${key}` },
-    });
-    if (!response.ok) return { name: "OpenRouter", status: "fail", detail: `authentication failed (${response.status})` };
-    const payload = (await response.json()) as { data?: { limit?: number | null; usage?: number; limit_remaining?: number | null } };
-    const data = payload.data;
-    const limit = data?.limit == null ? "no provider-side limit reported" : `$${data.limit.toFixed(2)} limit`;
-    const remaining = data?.limit_remaining == null ? "" : `, $${data.limit_remaining.toFixed(2)} remaining`;
-    return { name: "OpenRouter", status: "pass", detail: `authenticated; ${limit}${remaining}` };
+    const usage = await getOpenRouterUsage();
+    const limit = usage.limit == null ? "no provider-side limit reported" : `$${usage.limit.toFixed(2)} limit`;
+    const remaining = usage.remaining == null ? "" : `, $${usage.remaining.toFixed(2)} remaining`;
+    return { name: "OpenRouter", status: "pass", detail: `authenticated; ${limit}${remaining}; $${usage.usageDaily.toFixed(2)} used today` };
   } catch (error) {
     return { name: "OpenRouter", status: "fail", detail: error instanceof Error ? error.message : String(error) };
   }

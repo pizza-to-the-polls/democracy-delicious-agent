@@ -44,9 +44,9 @@ repositories:
         - npm test
 
 budget:
-  dailyUsd: 15
-  autonomousStopUsd: 350
-  absoluteUsd: 400
+  dailyUsd: 20
+  autonomousStopUsd: 24
+  absoluteUsd: 25
 
 limits:
   globalConcurrency: 1

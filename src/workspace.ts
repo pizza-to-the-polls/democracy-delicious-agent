@@ -75,6 +75,7 @@ export class WorkspaceManager {
         const source = isAbsolute(rawPath) ? rawPath : expandHome(rawPath);
         const destination = resolve(inputDirectory, basename(source));
         if (!destination.startsWith(`${inputDirectory}/`)) throw new Error(`Invalid input path: ${rawPath}`);
+        await rm(destination, { force: true });
         await copyFile(source, destination);
         await chmod(destination, 0o444);
       }

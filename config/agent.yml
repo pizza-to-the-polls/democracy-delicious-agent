@@ -21,7 +21,7 @@ models:
     id: deepseek/deepseek-v4-pro
     thinking: medium
   reviewer:
-    id: deepseek/deepseek-v4-pro
+    id: openai/gpt-5.4-mini
     thinking: high
 
 repositories:

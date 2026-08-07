@@ -3,6 +3,7 @@ import { GitHubAppAuth } from "../github/auth.js";
 import { GitHubClient } from "../github/client.js";
 import { expandHome } from "../config.js";
 import { runWork } from "./work.js";
+import { StateStore } from "../state.js";
 
 /**
  * Auto-discover the next agent:ready issue and work it.
@@ -98,11 +99,18 @@ export async function runAuto(
     return 0;
   }
 
+  // Check for existing state — auto-resume if work was already started.
+  const store = new StateStore(config);
+  const state = await store.load(next.repository, next.number);
+  const resume = !!(state && state.phase !== "created" && state.phase !== "reviewed");
+  if (resume) console.log(`Resuming (phase: ${state.phase})…`);
+
+
   return runWork(config, {
     repository: next.repository,
     issueNumber: next.number,
-    dryRun: options.dryRun,
-    resume: false,
+    dryRun: false,
+    resume,
     reviewOnly: false,
     integrationBranch:
       next.integrationBranch !== "master"

@@ -2,6 +2,7 @@
 import { Command } from "commander";
 import { ZodError } from "zod";
 import { loadConfig } from "./config.js";
+import { runAuto } from "./commands/run.js";
 import { runDoctor } from "./commands/doctor.js";
 import { postBootstrapInstructions } from "./commands/post-instructions.js";
 import { runWork } from "./commands/work.js";
@@ -19,6 +20,16 @@ program
   .action(async () => {
     const config = await loadConfig(program.opts<{ config?: string }>().config);
     process.exitCode = await runDoctor(config);
+  });
+
+program
+  .command("run")
+  .description("auto-discover next agent:ready issue and work it")
+  .option("--repo <owner/name>", "restrict to a single repository")
+  .option("--dry-run", "plan only", false)
+  .action(async (options: { repo?: string; dryRun: boolean }) => {
+    const config = await loadConfig(program.opts<{ config?: string }>().config);
+    process.exitCode = await runAuto(config, { repo: options.repo, dryRun: options.dryRun });
   });
 
 program

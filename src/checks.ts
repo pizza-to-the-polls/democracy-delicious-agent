@@ -37,10 +37,12 @@ export async function runChecks(options: {
     : repoConfig.checks.full;
   const results: ProcessResult[] = [];
   if (repoConfig.checks.fix) {
+    // Run fix first so the agent's work is formatted before review.
+    // If fix fails here, the agent didn't follow the coding standards.
     const wrappedFix = `source "$HOME/.nvm/nvm.sh" && nvm use ${repoConfig.nodeVersion} >/dev/null && ${repoConfig.checks.fix}`;
     const fixResult = await runShell(wrappedFix, { cwd: options.cwd, env, timeoutMs: 20 * 60_000 });
     results.push(fixResult);
-    if (fixResult.exitCode !== 0) return results;
+    // Don't bail on fix failure — let the reviewer see the raw lint output too.
   }
   for (const check of checks) {
     const wrapped = `source "$HOME/.nvm/nvm.sh" && nvm use ${repoConfig.nodeVersion} >/dev/null && ${check}`;

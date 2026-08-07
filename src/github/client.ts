@@ -119,4 +119,47 @@ export class GitHubClient {
     const pr = (await response.json()) as { html_url: string };
     return pr.html_url;
   }
+
+  async searchIssues(repository: string, labels: string[]): Promise<Array<{
+    number: number;
+    title: string;
+    body: string | null;
+    labels: string[];
+  }>> {
+    const labelQuery = labels.map((l) => `label:${l}`).join("+");
+    const response = await this.request(
+      `https://api.github.com/repos/${repository}/issues?labels=${labelQuery}&state=open&per_page=10&sort=created&direction=asc`
+    );
+    const issues = (await response.json()) as Array<{
+      number: number;
+      title: string;
+      body: string | null;
+      labels: Array<{ name: string }>;
+      pull_request?: unknown;
+    }>;
+    return issues
+      .filter((i) => !i.pull_request) // Exclude PRs from issue search
+      .map((i) => ({
+        number: i.number,
+        title: i.title,
+        body: i.body,
+        labels: i.labels.map((l) => l.name),
+      }));
+  }
+
+  async searchPullRequests(repository: string, titlePrefix: string): Promise<Array<{
+    number: number;
+    title: string;
+    html_url: string;
+  }>> {
+    const response = await this.request(
+      `https://api.github.com/repos/${repository}/pulls?state=open&per_page=5`
+    );
+    const prs = (await response.json()) as Array<{
+      number: number;
+      title: string;
+      html_url: string;
+    }>;
+    return prs.filter((pr) => pr.title.includes(titlePrefix));
+  }
 }

@@ -126,7 +126,7 @@ export class GitHubClient {
     body: string | null;
     labels: string[];
   }>> {
-    const labelQuery = labels.map((l) => `label:${l}`).join("+");
+    const labelQuery = labels.map(encodeURIComponent).join(",");
     const response = await this.request(
       `https://api.github.com/repos/${repository}/issues?labels=${labelQuery}&state=open&per_page=10&sort=created&direction=asc`
     );
@@ -147,19 +147,26 @@ export class GitHubClient {
       }));
   }
 
-  async searchPullRequests(repository: string, titlePrefix: string): Promise<Array<{
+  async listOpenPullRequests(repository: string): Promise<Array<{
     number: number;
     title: string;
+    headRefName: string;
     html_url: string;
   }>> {
     const response = await this.request(
-      `https://api.github.com/repos/${repository}/pulls?state=open&per_page=5`
+      `https://api.github.com/repos/${repository}/pulls?state=open&per_page=20`
     );
     const prs = (await response.json()) as Array<{
       number: number;
       title: string;
+      head: { ref: string };
       html_url: string;
     }>;
-    return prs.filter((pr) => pr.title.includes(titlePrefix));
+    return prs.map((pr) => ({
+      number: pr.number,
+      title: pr.title,
+      headRefName: pr.head.ref,
+      html_url: pr.html_url,
+    }));
   }
 }

@@ -62,11 +62,15 @@ export async function runAuto(
       }
 
       // Check if there's already an open PR for this issue.
-      const existingPRs = await client.searchPullRequests(
-        repo,
-        `fix: ${issue.title}`
+      // Look for agent branches matching agent/{issueNumber}-*
+      const openPRs = await client.listOpenPullRequests(repo);
+      const alreadyWorking = openPRs.some(
+        (pr) =>
+          pr.headRefName.startsWith(`agent/${issue.number}-`) ||
+          (pr.title.includes(`#${issue.number}`) &&
+            pr.title.includes(issue.title.slice(0, 20)))
       );
-      if (existingPRs.length > 0) continue; // Skip — already being worked.
+      if (alreadyWorking) continue; // Skip — already being worked.
 
       candidates.push({
         repository: repo,

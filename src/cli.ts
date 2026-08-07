@@ -61,6 +61,12 @@ program
     await postBootstrapInstructions(config);
   });
 
+// Default: when no subcommand is given, auto-discover and work the next issue.
+program.action(async () => {
+  const config = await loadConfig(program.opts<{ config?: string }>().config);
+  process.exitCode = await runAuto(config, { dryRun: false });
+});
+
 try {
   await program.parseAsync();
 } catch (error) {

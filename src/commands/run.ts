@@ -93,6 +93,11 @@ export async function runAuto(
   );
   console.log(`Integration branch: ${next.integrationBranch}`);
 
+  if (options.dryRun) {
+    console.log("Dry run — stopping before agent execution.");
+    return 0;
+  }
+
   return runWork(config, {
     repository: next.repository,
     issueNumber: next.number,

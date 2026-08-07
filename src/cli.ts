@@ -28,8 +28,9 @@ program
   .requiredOption("--issue <number>", "GitHub issue number", (value) => Number.parseInt(value, 10))
   .option("--dry-run", "plan only; do not let the agent modify repository files", false)
   .option("--resume", "resume/reconcile existing local issue state", false)
+  .option("--integration-branch <name>", "feature branch to target (child PRs merge here; umbrella PR to master later)")
   .option("--review-only", "run deterministic checks and independent review on the existing worktree", false)
-  .action(async (options: { repo: string; issue: number; dryRun: boolean; resume: boolean; reviewOnly: boolean }) => {
+  .action(async (options: { repo: string; issue: number; dryRun: boolean; resume: boolean; reviewOnly: boolean; integrationBranch?: string }) => {
     const config = await loadConfig(program.opts<{ config?: string }>().config);
     process.exitCode = await runWork(config, {
       repository: options.repo,
@@ -37,6 +38,7 @@ program
       dryRun: options.dryRun,
       resume: options.resume,
       reviewOnly: options.reviewOnly,
+      integrationBranch: options.integrationBranch,
     });
   });
 

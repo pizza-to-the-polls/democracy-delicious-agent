@@ -36,12 +36,12 @@ export class WorkspaceManager {
     };
   }
 
-  async prepare(repository: string, issueNumber: number, issueTitle: string, inputPaths: string[] = []): Promise<WorkspaceInfo> {
+  async prepare(repository: string, issueNumber: number, issueTitle: string, inputPaths: string[] = [], integrationBranch?: string): Promise<WorkspaceInfo> {
     const repoName = basename(repository);
     const repositoryPath = resolve(this.root, "repositories", repoName);
     const worktreePath = resolve(this.root, "worktrees", repoName, `issue-${issueNumber}`);
     const branch = `agent/${issueNumber}-${slugify(issueTitle)}`;
-    const baseBranch = `feature/${issueNumber}-${slugify(issueTitle)}`;
+    const baseBranch = integrationBranch ?? `feature/${issueNumber}-${slugify(issueTitle)}`;
     await mkdir(resolve(this.root, "repositories"), { recursive: true, mode: 0o700 });
     await mkdir(resolve(this.root, "worktrees", repoName), { recursive: true, mode: 0o700 });
 

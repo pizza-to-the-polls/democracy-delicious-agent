@@ -104,4 +104,19 @@ export class GitHubClient {
     });
     return (await response.json()) as { number: number; html_url: string };
   }
+
+  async createPullRequest(repository: string, options: {
+    head: string;
+    base: string;
+    title: string;
+    body: string;
+  }): Promise<string> {
+    const response = await this.request(`https://api.github.com/repos/${repository}/pulls`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(options),
+    });
+    const pr = (await response.json()) as { html_url: string };
+    return pr.html_url;
+  }
 }

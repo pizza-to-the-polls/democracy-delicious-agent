@@ -12,6 +12,7 @@ import { GitHubClient } from "../github/client.js";
 import { expandHome } from "../config.js";
 import { runAgentSession } from "../agent/run-session.js";
 import { getOpenRouterUsage, assertBudgetAvailable } from "../budget.js";
+import { logTimeline } from "../timeline.js";
 
 // ---------------------------------------------------------------------------
 // Types

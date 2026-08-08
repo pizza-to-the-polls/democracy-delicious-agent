@@ -7,7 +7,7 @@
 
 import { appendFile, mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
-import { expandHome } from "../config.js";
+import { expandHome } from "./config.js";
 
 export interface TimelineEntry {
   ts: string; // ISO 8601

@@ -5,6 +5,7 @@ import { loadConfig } from "./config.js";
 import { runAuto } from "./commands/run.js";
 import { runReview } from "./commands/review.js";
 import { runDoctor } from "./commands/doctor.js";
+import { runDaemon } from "./commands/daemon.js";
 import { postBootstrapInstructions } from "./commands/post-instructions.js";
 import { runWork } from "./commands/work.js";
 
@@ -14,6 +15,27 @@ program
   .description("Autonomous development orchestrator for Pizza to the Polls")
   .version("0.1.0")
   .option("-c, --config <path>", "path to agent YAML configuration");
+
+// ---- Daemon (continuous loop) ----------------------------------------------
+
+program
+  .command("daemon")
+  .description("continuous loop: discover → work → review → merge → repeat")
+  .option("--repo <owner/name>", "restrict to a single repository")
+  .option("--dry-run", "discover and plan only, do not mutate", false)
+  .option("--once", "run a single iteration and exit", false)
+  .option("--poll <seconds>", "poll interval when idle", (v) => Number.parseFloat(v), 60)
+  .action(async (options: { repo?: string; dryRun: boolean; once: boolean; poll: number }) => {
+    const config = await loadConfig(program.opts<{ config?: string }>().config);
+    process.exitCode = await runDaemon(config, {
+      repo: options.repo,
+      dryRun: options.dryRun,
+      once: options.once,
+      pollIntervalSeconds: options.poll,
+    });
+  });
+
+// ---- Single-shot commands --------------------------------------------------
 
 program
   .command("review")
@@ -35,7 +57,7 @@ program
 
 program
   .command("run")
-  .description("auto-discover next agent:ready issue and work it")
+  .description("auto-discover next agent:ready issue and work it (single shot)")
   .option("--repo <owner/name>", "restrict to a single repository")
   .option("--dry-run", "plan only", false)
   .action(async (options: { repo?: string; dryRun: boolean }) => {
@@ -65,8 +87,6 @@ program
   });
 
 program
-
-program
   .command("post-instructions")
   .description("create the bootstrap instructions issue using the GitHub App")
   .action(async () => {
@@ -74,10 +94,14 @@ program
     await postBootstrapInstructions(config);
   });
 
-// Default: when no subcommand is given, auto-discover and work the next issue.
+// Default: when no subcommand is given, run the daemon loop.
 program.action(async () => {
   const config = await loadConfig(program.opts<{ config?: string }>().config);
-  process.exitCode = await runAuto(config, { dryRun: false });
+  process.exitCode = await runDaemon(config, {
+    pollIntervalSeconds: 60,
+    once: false,
+    dryRun: false,
+  });
 });
 
 try {

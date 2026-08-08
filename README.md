@@ -2,7 +2,7 @@
 
 A cost-conscious, auditable autonomous development orchestrator for Pizza to the Polls.
 
-The project is under active bootstrap. The first implemented capability is `doctor`, which verifies the local credentials and permission boundaries before any autonomous development is enabled.
+The project is under active development. Core capabilities — credential verification, issue planning, implementation with checks and review, auto-discovery, and autonomous PR review with merge — are implemented.
 
 ## Architecture principles
 
@@ -67,20 +67,62 @@ npm run agent -- doctor
 npm run agent -- doctor
 npm run agent -- --help
 
-# Read-only planning trial for an approved issue
+# Run the continuous daemon (discover → work → review → merge → repeat)
+npm run agent                          # daemon mode (default)
+npm run agent -- daemon --once         # single iteration
+npm run agent -- daemon --dry-run      # plan only, no mutations
+npm run agent -- daemon --poll 30      # faster polling when idle
+
+# Run the daemon in multiple tabs — file-based locking prevents collisions
+# Tab 1:  npm run agent
+# Tab 2:  npm run agent
+# Tab 3:  npm run agent
+
+# Single-shot commands for debugging / manual use
+npm run agent -- run                   # discover + work next issue
+npm run agent -- run --dry-run         # discover only, no work
+npm run agent -- review                # review + merge open agent PRs
+npm run agent -- review --dry-run      # review only, no merge
+
+# Plan and implement a specific approved issue
 npm run agent -- work \
   --repo pizza-to-the-polls/pizzabase \
   --issue 152 \
   --dry-run
 
-# Implement, run configured checks, and perform independent review locally
+# Resume work on an issue after failure or repair
 npm run agent -- work \
   --repo pizza-to-the-polls/pizzabase \
   --issue 152 \
   --resume
+
+# Run autonomous review on open agent PRs targeting feature branches
+npm run agent -- review
+npm run agent -- review --dry-run
+npm run agent -- review --repo pizza-to-the-polls/pizzabase
 ```
 
-`work` requires an open issue carrying `agent:ready`. It creates a clean clone and worktree under `~/PizzaAgent`; it never uses the human's active application clones. Push, PR creation, merging, and deployment are intentionally disabled in this milestone because the application repositories still deploy every non-master branch to shared staging.
+### `daemon` (default command) — continuous autonomous loop
+
+Runs indefinitely: discovers `agent:ready` issues → implements them with the full `work` pipeline → creates PRs → reviews open agent PRs → merges accepted ones → repeats. File-based locking (`~/PizzaAgent/locks/`) lets you run multiple daemon instances in separate terminals — they'll never collide on the same issue.
+
+```bash
+npm run agent                    # daemon mode (no subcommand needed)
+npm run agent -- daemon --once   # one iteration then exit
+npm run agent -- daemon --poll 30  # faster idle polling
+```
+
+### `run` — single-shot auto-discover and work
+
+Scans approved repositories for issues labeled `agent:ready` that don't already have an open agent PR, picks the oldest, determines the integration branch (from labels or issue body), and delegates to `work`. Supports auto-resume if previous work was interrupted.
+
+### `work` — plan, implement, review
+
+Requires an open issue carrying `agent:ready`. Creates a clean clone and worktree under `~/PizzaAgent`; never uses the human's active application clones. Pipeline: plan (read-only) → implement → checks (format/lint/typecheck/test) → independent review → push + create PR targeting the feature integration branch. If checks or review fail, the worktree is retained for `--resume` repair.
+
+### `review` — autonomous PR review and merge
+
+Finds open agent PRs (`agent/*`) targeting `feature/*` branches. Runs the reviewer model against the diff, posts findings as a PR comment, and merges when VERDICT: ACCEPT and CI is green. PRs with human review comments are flagged with `agent:needs-human` and skipped. Updates linked issue labels (`agent:in-review` → `agent:done`).
 
 Maintainer-only bootstrap helper:
 
@@ -107,15 +149,21 @@ Implemented:
 - isolated clean clones and issue worktrees
 - explicit OpenRouter planner/executor/reviewer models through the Pi SDK
 - dry-run planning
-- local implementation, configured checks, independent review, limits, and a recovery journal
+- local implementation with configured checks (format → lint → typecheck → test)
+- independent review with VERDICT: ACCEPT/REJECT
+- recovery journal with `--resume` repair cycles
+- auto-discovery of `agent:ready` issues across repos (`run`)
+- **continuous daemon mode** — default command, multi-instance safe via file locks
+- child PR creation targeting feature integration branches
+- autonomous PR review + merge (`review`)
+- human-feedback detection and `agent:needs-human` flagging
+- linked issue label management
+- test suite (36 tests, 0 failures)
 - bootstrap issue template
 
 Not enabled yet:
 
-- Project queue scheduling and continuous daemon mode
-- automatic repair after reviewer rejection
-- child PR creation or merging
-- staging deployment
+- Staging deployment
 
 See the organization Project for planned work:
 

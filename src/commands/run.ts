@@ -1,3 +1,5 @@
+import { mkdir, writeFile, rm } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { AgentConfig } from "../config.js";
 import { GitHubAppAuth } from "../github/auth.js";
 import { GitHubClient } from "../github/client.js";
@@ -9,6 +11,10 @@ export interface RunAutoDeps {
   client?: GitHubClient;
   store?: StateStore;
   work?: typeof runWork;
+  /** Try to acquire an exclusive lock for this issue. Returns true if locked. */
+  tryLock?: (repo: string, issue: number) => Promise<boolean>;
+  /** Release a previously acquired lock. */
+  unlock?: (repo: string, issue: number) => Promise<void>;
 }
 
 /**
@@ -16,7 +22,8 @@ export interface RunAutoDeps {
  *
  * Scans approved repositories for issues labeled `agent:ready` that don't
  * already have an open agent PR, picks the oldest, determines the right
- * integration branch, and delegates to the standard `work` pipeline.
+ * integration branch, acquires an exclusive lock, and delegates to the
+ * standard `work` pipeline. If locking fails, the next candidate is tried.
  */
 export async function runAuto(
   config: AgentConfig,
@@ -50,11 +57,8 @@ export async function runAuto(
     const issues = await client.searchIssues(repo, ["agent:ready"]);
     for (const issue of issues) {
       // Determine the integration branch from issue labels or body hints.
-      // Convention: if the issue is on pizzabase, look for feature branch labels
-      // or default to the issue's project column / milestone.
       let integrationBranch = "master";
 
-      // Check for explicit integration-branch label (e.g. "branch:feature/exif-endpoint").
       for (const label of issue.labels) {
         if (label.startsWith("branch:")) {
           integrationBranch = label.slice(7);
@@ -62,8 +66,6 @@ export async function runAuto(
         }
       }
 
-      // If no explicit label, try to read from issue body (e.g. a section
-      // like "Integration branch: feature/sightengine-review").
       if (integrationBranch === "master" && issue.body) {
         const match = issue.body.match(
           /[Ii]ntegration\s*branch:\s*(\S+)/
@@ -72,7 +74,6 @@ export async function runAuto(
       }
 
       // Check if there's already an open PR for this issue.
-      // Look for agent branches matching agent/{issueNumber}-*
       const openPRs = await client.listOpenPullRequests(repo);
       const alreadyWorking = openPRs.some(
         (pr) =>
@@ -91,39 +92,89 @@ export async function runAuto(
     }
   }
 
-  if (candidates.length === 0) {
-    console.log("No agent:ready issues without active PRs. Backlog is clear.");
-    return 0;
+  // Try each candidate in order; skip any we can't lock.
+  for (const candidate of candidates) {
+    if (options.dryRun) {
+      console.log(
+        `Would work: ${candidate.repository}#${candidate.number} — ${candidate.title}`
+      );
+      console.log(`Integration branch: ${candidate.integrationBranch}`);
+      console.log("Dry run — stopping before agent execution.");
+      return 0;
+    }
+
+    // ---- Locking ----
+    const lockFn = deps.tryLock ?? defaultTryLock(config);
+    const unlockFn = deps.unlock ?? defaultUnlock(config);
+    const locked = await lockFn(candidate.repository, candidate.number);
+    if (!locked) {
+      console.log(`Skipping #${candidate.number} — locked by another daemon.`);
+      continue;
+    }
+
+    console.log(
+      `Auto-selected: ${candidate.repository}#${candidate.number} — ${candidate.title}`
+    );
+    console.log(`Integration branch: ${candidate.integrationBranch}`);
+
+    // Check for existing state — auto-resume if work was already started.
+    const store = deps.store ?? new StateStore(config);
+    const state = await store.load(candidate.repository, candidate.number);
+    const resume = !!(state && state.phase !== "created" && state.phase !== "reviewed");
+    if (resume) console.log(`Resuming (phase: ${state.phase})…`);
+
+    const workFn = deps.work ?? runWork;
+    try {
+      return await workFn(config, {
+        repository: candidate.repository,
+        issueNumber: candidate.number,
+        dryRun: false,
+        resume,
+        reviewOnly: false,
+        integrationBranch:
+          candidate.integrationBranch !== "master"
+            ? candidate.integrationBranch
+            : undefined,
+      });
+    } finally {
+      // Always release the lock when work finishes or fails.
+      await unlockFn(candidate.repository, candidate.number).catch(() => {});
+    }
   }
 
-  // Pick the first candidate (oldest issue, sorted by GitHub default).
-  const next = candidates[0];
-  console.log(
-    `Auto-selected: ${next.repository}#${next.number} — ${next.title}`
-  );
-  console.log(`Integration branch: ${next.integrationBranch}`);
+  console.log("No agent:ready issues without active PRs that we can lock. Backlog is clear.");
+  return 0;
+}
 
-  if (options.dryRun) {
-    console.log("Dry run — stopping before agent execution.");
-    return 0;
-  }
+// ---------------------------------------------------------------------------
+// Default file-based locking (single-machine, multi-process safe)
+// ---------------------------------------------------------------------------
 
-  // Check for existing state — auto-resume if work was already started.
-  const store = deps.store ?? new StateStore(config);
-  const state = await store.load(next.repository, next.number);
-  const resume = !!(state && state.phase !== "created" && state.phase !== "reviewed");
-  if (resume) console.log(`Resuming (phase: ${state.phase})…`);
+function lockPath(config: AgentConfig, repository: string, issueNumber: number): string {
+  return resolve(expandHome(config.paths.workspace), "locks", `${repository.replace("/", "--")}-${issueNumber}.lock`);
+}
 
-  const workFn = deps.work ?? runWork;
-  return workFn(config, {
-    repository: next.repository,
-    issueNumber: next.number,
-    dryRun: false,
-    resume,
-    reviewOnly: false,
-    integrationBranch:
-      next.integrationBranch !== "master"
-        ? next.integrationBranch
-        : undefined,
-  });
+function defaultTryLock(config: AgentConfig) {
+  return async (repository: string, issueNumber: number): Promise<boolean> => {
+    const path = lockPath(config, repository, issueNumber);
+    await mkdir(resolve(path, ".."), { recursive: true, mode: 0o700 });
+    try {
+      // wx = exclusive write, fails with EEXIST if lock already held
+      await writeFile(path, `${process.pid}\n${new Date().toISOString()}`, { flag: "wx", mode: 0o600 });
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw error;
+    }
+  };
+}
+
+function defaultUnlock(config: AgentConfig) {
+  return async (repository: string, issueNumber: number): Promise<void> => {
+    try {
+      await rm(lockPath(config, repository, issueNumber), { force: true });
+    } catch {
+      // Lock file already gone — no problem.
+    }
+  };
 }

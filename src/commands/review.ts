@@ -94,6 +94,7 @@ export async function runReview(config: AgentConfig, options: {
       const ciPassed = ci.every(
         (c) => c.conclusion === "SUCCESS" || c.conclusion === "NEUTRAL" || c.conclusion === "SKIPPED"
       );
+      console.log(`  PR #${pr.number}: CI ${ciPassed ? "pass" : "FAIL"} (${ci.map((c) => `${c.name}=${c.conclusion ?? "pending"}`).join(", ") || "no checks"})`);
 
       // Check for human review comments.
       const comments = await client.listPullRequestComments(repo, pr.number);
@@ -144,6 +145,7 @@ export async function runReview(config: AgentConfig, options: {
         "## CI failure detected\n\nOne or more CI checks did not pass. An agent will pick this up and attempt a fix."
       );
       await client.addPullRequestLabel(pr.repository, pr.number, "agent:feedback");
+      await logTimeline(config, { ts: new Date().toISOString(), event: "review", pr: pr.number, status: "skip", detail: "CI failed" });
       decisions.push({ accepted: false, merged: false, commentUrl: pr.html_url });
       continue;
     }
@@ -156,6 +158,14 @@ export async function runReview(config: AgentConfig, options: {
     // ---- 2. Run independent review ----------------------------------------
     console.log("  Running independent review…");
     const prDiff = await client.getPullRequestDiff(pr.repository, pr.number);
+    const diffSize = prDiff.length;
+    const isJson = prDiff.startsWith("{");
+    console.log(`  Diff size: ${diffSize} bytes${isJson ? " (WARNING: looks like JSON, not a diff!)" : ""}`);
+    if (isJson) {
+      console.log("  ⚠ Diff is JSON — Accept header override may be broken. Skipping review.");
+      await logTimeline(config, { ts: new Date().toISOString(), event: "review", pr: pr.number, status: "fail", detail: "diff is JSON, not a diff" });
+      continue;
+    }
 
     const reviewer = await runAgentSession({
       config,
@@ -178,23 +188,38 @@ export async function runReview(config: AgentConfig, options: {
     console.log(`  Comment: ${commentUrl}`);
 
     const accepted = reviewAccepted(reviewer.text);
-    const merged = accepted && pr.ciPassed;
+    let merged = accepted && pr.ciPassed;
 
     // ---- 4. Merge if accepted ---------------------------------------------
     if (merged) {
       console.log("  ✅ Review passed + CI green — merging.");
-      await client.addPullRequestLabel(pr.repository, pr.number, "agent:reviewed");
-      await client.mergePullRequest(pr.repository, pr.number, pr.headRefName);
-      // Update the linked issue label.
-      const linkedIssues = await client.getLinkedIssues(pr.repository, pr.number);
-      for (const issue of linkedIssues) {
-        await client.removeIssueLabel(pr.repository, issue.number, "agent:in-review");
-        await client.addIssueLabel(pr.repository, issue.number, "agent:done");
+      try {
+        await client.mergePullRequest(pr.repository, pr.number, pr.headRefName);
+        await client.addPullRequestLabel(pr.repository, pr.number, "agent:reviewed");
+        console.log("  ✅ Merged successfully.");
+        await logTimeline(config, { ts: new Date().toISOString(), event: "review", pr: pr.number, status: "ok", detail: "merged" });
+        // Update the linked issue label.
+        const linkedIssues = await client.getLinkedIssues(pr.repository, pr.number);
+        for (const issue of linkedIssues) {
+          try {
+            await client.removeIssueLabel(pr.repository, issue.number, "agent:in-review");
+            await client.addIssueLabel(pr.repository, issue.number, "agent:done");
+          } catch { /* non-blocking */ }
+        }
+      } catch (err) {
+        console.log(`  ❌ Merge failed: ${err instanceof Error ? err.message : String(err)}`);
+        await client.addPullRequestComment(pr.repository, pr.number,
+          `## Merge failed\n\n${err instanceof Error ? err.message : String(err)}\n\n_— democracy-delicious-agent_`
+        );
+        await logTimeline(config, { ts: new Date().toISOString(), event: "review", pr: pr.number, status: "fail", detail: `merge error: ${err instanceof Error ? err.message : String(err)}` });
+        merged = false;
       }
     } else if (accepted && !pr.ciPassed) {
       console.log("  ⚠ Review passed but CI failed — not merging.");
+      await logTimeline(config, { ts: new Date().toISOString(), event: "review", pr: pr.number, status: "skip", detail: "accepted but CI failed" });
     } else {
       console.log("  ❌ Review rejected — see comment for findings.");
+      await logTimeline(config, { ts: new Date().toISOString(), event: "review", pr: pr.number, status: "skip", detail: "review rejected" });
     }
 
     decisions.push({ accepted, merged, commentUrl });

@@ -17,6 +17,7 @@ import { StateStore } from "../state.js";
 import { runAgentSession } from "../agent/run-session.js";
 import { getOpenRouterUsage, assertBudgetAvailable } from "../budget.js";
 import { runProcess, assertSuccess } from "../process.js";
+import { logTimeline } from "../timeline.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -33,6 +34,7 @@ interface FeedbackPR {
     path?: string;
     body: string;
   }>;
+  ciFailed: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -66,13 +68,25 @@ export async function runRespond(config: AgentConfig, options: {
       const labels = details.labels.map((l: { name: string }) => l.name);
       const hasFeedbackLabel = labels.some((l) => ["agent:feedback", "agent:needs-human"].includes(l));
 
-      const comments = await client.listPullRequestComments(repo, pr.number);
+      // Use issue comments (PR conversation), not review comments (diff-line).
+      const comments = await client.listIssueComments(repo, pr.number);
       const humanComments = comments.filter(
         (c) => !c.user.login.includes("bot") && !c.user.login.includes("[bot]")
       );
 
+      // Also check CI status for bot-triggered feedback.
+      let ciFailed = false;
+      if (hasFeedbackLabel && humanComments.length === 0) {
+        try {
+          const checks = await client.getPullRequestChecks(repo, pr.number);
+          ciFailed = checks.some((c) => c.conclusion === "FAILURE");
+          console.log(`  PR #${pr.number}: CI ${ciFailed ? "FAILING" : "passing"} (${checks.map((c) => `${c.name}=${c.conclusion}`).join(", ")})`);
+        } catch (err) {
+          console.log(`  PR #${pr.number}: could not fetch CI checks: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
       if (hasFeedbackLabel || humanComments.length > 0) {
-        // For CI-failure or bot-triggered feedback, include all recent comments.
         const allComments = humanComments.length > 0 ? humanComments.slice(-5) : comments.slice(-5);
         toProcess.push({
           repository: repo,
@@ -81,6 +95,7 @@ export async function runRespond(config: AgentConfig, options: {
           headRefName: pr.headRefName,
           baseRefName: pr.baseRefName,
           humanComments: allComments,
+          ciFailed,
         });
       }
     }
@@ -91,11 +106,12 @@ export async function runRespond(config: AgentConfig, options: {
     return 0;
   }
 
-  console.log(`Found ${toProcess.length} PR(s) with feedback.`);
+  console.log(`Found ${toProcess.length} PR(s) with feedback: ${toProcess.map((p) => `#${p.number}`).join(", ")}`);
 
   for (const pr of toProcess) {
     console.log(`\n--- PR #${pr.number}: ${pr.title} ---`);
-    console.log(`  ${pr.humanComments.length} human comment(s)`);
+    console.log(`  CI failed: ${pr.ciFailed}`);
+    console.log(`  ${pr.humanComments.length} human/bot comment(s)`);
 
     if (options.dryRun) {
       console.log("  Dry run — would implement fixes.");
@@ -121,14 +137,19 @@ export async function runRespond(config: AgentConfig, options: {
       .map((c) => `### @${c.user.login}${c.path ? ` on \`${c.path}\`` : ""}\n> ${c.body}`)
       .join("\n\n");
 
-    const prompt = `## Respond to human feedback on PR #${pr.number}
+    const ciHint = pr.ciFailed
+      ? "\n\n**CI is failing on this PR.** Check the test output, find the root cause (e.g. type errors, test failures, imports), and fix it."
+      : "";
+
+    const prompt = `## Respond to feedback on PR #${pr.number}
 
 The following feedback was left on your PR. Implement the requested changes.
 
-${feedbackText}
+${feedbackText || "(No written feedback — check the PR comments and CI status on GitHub.)"}${ciHint}
 
 # Instructions
 - Read each comment carefully. Address every request.
+- If CI is failing, find and fix the root cause.
 - Make minimal, focused changes. Don't refactor unrelated code.
 - Run the project's fix/lint command when done.
 - The orchestrator will push your changes and re-request review.`;
@@ -160,21 +181,25 @@ ${feedbackText}
     const commitResult = await runProcess("git", ["-C", workspace.worktreePath, "commit", "-m", `fix: respond to review feedback on PR #${pr.number}`], { env });
     if (commitResult.exitCode === 0) {
       await runProcess("git", ["-C", workspace.worktreePath, "push", "origin", pr.headRefName], { env });
+
+      // ---- 6. Update labels -----------------------------------------------
+      // Remove feedback labels, add in-review so the review loop picks it up.
+      for (const label of ["agent:feedback", "agent:needs-human"]) {
+        try { await client.removeIssueLabel(pr.repository, pr.number, label); } catch { /* ignore */ }
+      }
+      await client.addIssueLabel(pr.repository, pr.number, "agent:in-review");
+
+      // Post a comment noting the fix.
+      await client.addPullRequestComment(pr.repository, pr.number,
+        `✅ Implemented fixes for the review feedback.\n\n_— democracy-delicious-agent_`
+      );
+
+      await logTimeline(config, { ts: new Date().toISOString(), event: "respond", pr: pr.number, status: "ok", detail: "fix committed and pushed" });
+      console.log("  ✅ Fixes pushed, PR re-opened for review.");
+    } else {
+      await logTimeline(config, { ts: new Date().toISOString(), event: "respond", pr: pr.number, status: "skip", detail: "no changes to commit" });
+      console.log("  ⚠ No changes to commit — skipping label update. Check manually.");
     }
-
-    // ---- 6. Update labels -----------------------------------------------
-    // Remove feedback labels, add in-review so the review loop picks it up.
-    for (const label of ["agent:feedback", "agent:needs-human"]) {
-      try { await client.removeIssueLabel(pr.repository, pr.number, label); } catch { /* ignore */ }
-    }
-    await client.addIssueLabel(pr.repository, pr.number, "agent:in-review");
-
-    // Post a comment noting the fix.
-    await client.addPullRequestComment(pr.repository, pr.number,
-      `✅ Implemented fixes for the review feedback.\n\n_— democracy-delicious-agent_`
-    );
-
-    console.log("  ✅ Fixes pushed, PR re-opened for review.");
   }
 
   return 0;

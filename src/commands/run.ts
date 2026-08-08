@@ -120,7 +120,14 @@ export async function runAuto(
     // Check for existing state — auto-resume if work was already started.
     const store = deps.store ?? new StateStore(config);
     const state = await store.load(candidate.repository, candidate.number);
-    const resume = !!(state && state.phase !== "created" && state.phase !== "reviewed");
+
+    // Skip already-reviewed issues — they're done.
+    if (state && state.phase === "reviewed") {
+      console.log(`Skipping #${candidate.number} — already reviewed.`);
+      continue;
+    }
+
+    const resume = !!(state && state.phase !== "created");
     if (resume) console.log(`Resuming (phase: ${state.phase})…`);
 
     const workFn = deps.work ?? runWork;

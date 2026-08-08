@@ -8,6 +8,7 @@ import { runRespond } from "./commands/respond.js";
 import { runDoctor } from "./commands/doctor.js";
 import { postBootstrapInstructions } from "./commands/post-instructions.js";
 import { runWork } from "./commands/work.js";
+import { logTimeline, nextIteration } from "./timeline.js";
 
 const program = new Command();
 program
@@ -83,13 +84,57 @@ program
     await postBootstrapInstructions(config);
   });
 
-// Default: when no subcommand is given, auto-discover and work the next issue.
+// Default: daemon loop — respond → review → discover.
 program.action(async () => {
   const config = await loadConfig(program.opts<{ config?: string }>().config);
-  // Default pipeline: respond to feedback → review PRs → work next issue.
-  let exitCode = await runRespond(config, { dryRun: false });
-  if (exitCode === 0) exitCode = await runReview(config, { dryRun: false });
-  if (exitCode === 0) exitCode = await runAuto(config, { dryRun: false });
+
+  const iter = nextIteration();
+  const startTime = Date.now();
+  console.log(`\n━━━ Iteration ${iter} started at ${new Date().toISOString()} ━━━`);
+  await logTimeline(config, { ts: new Date().toISOString(), event: "iteration_start", iteration: iter, status: "start" });
+
+  // Phase 1: respond to feedback.
+  let exitCode: number;
+  const respondStart = Date.now();
+  try {
+    exitCode = await runRespond(config, { dryRun: false });
+    await logTimeline(config, { ts: new Date().toISOString(), event: "phase_done", phase: "respond", iteration: iter, status: exitCode === 0 ? "ok" : "fail", durationMs: Date.now() - respondStart });
+  } catch (err) {
+    console.error("respond phase crashed:", err);
+    await logTimeline(config, { ts: new Date().toISOString(), event: "phase_done", phase: "respond", iteration: iter, status: "fail", detail: err instanceof Error ? err.message : String(err), durationMs: Date.now() - respondStart });
+    exitCode = 1;
+  }
+
+  // Phase 2: review PRs.
+  if (exitCode === 0) {
+    const reviewStart = Date.now();
+    try {
+      exitCode = await runReview(config, { dryRun: false });
+      await logTimeline(config, { ts: new Date().toISOString(), event: "phase_done", phase: "review", iteration: iter, status: exitCode === 0 ? "ok" : "fail", durationMs: Date.now() - reviewStart });
+    } catch (err) {
+      console.error("review phase crashed:", err);
+      await logTimeline(config, { ts: new Date().toISOString(), event: "phase_done", phase: "review", iteration: iter, status: "fail", detail: err instanceof Error ? err.message : String(err), durationMs: Date.now() - reviewStart });
+      exitCode = 1;
+    }
+  }
+
+  // Phase 3: discover and work next issue.
+  if (exitCode === 0) {
+    const runStart = Date.now();
+    try {
+      exitCode = await runAuto(config, { dryRun: false });
+      await logTimeline(config, { ts: new Date().toISOString(), event: "phase_done", phase: "run", iteration: iter, status: exitCode === 0 ? "ok" : "fail", durationMs: Date.now() - runStart });
+    } catch (err) {
+      console.error("run phase crashed:", err);
+      await logTimeline(config, { ts: new Date().toISOString(), event: "phase_done", phase: "run", iteration: iter, status: "fail", detail: err instanceof Error ? err.message : String(err), durationMs: Date.now() - runStart });
+      exitCode = 1;
+    }
+  }
+
+  const totalMs = Date.now() - startTime;
+  console.log(`━━━ Iteration ${iter} done (${totalMs}ms, exit ${exitCode}) ━━━\n`);
+  await logTimeline(config, { ts: new Date().toISOString(), event: "iteration_end", iteration: iter, status: exitCode === 0 ? "ok" : "fail", durationMs: totalMs });
+
   process.exitCode = exitCode;
 });
 

@@ -225,19 +225,25 @@ describe("runAuto", () => {
     assert.strictEqual(workOptions(workFn).resume, true);
   });
 
-  it("does not resume when state is 'reviewed'", async () => {
+  it("skips issues with 'reviewed' state entirely", async () => {
     const workFn = mock.fn(async () => 0);
     const deps = buildDeps({
       searchIssues: [[
         { number: 10, title: "Fix something", body: null, labels: ["agent:ready", "branch:feature/x"] },
+        { number: 11, title: "Unreviewed issue", body: null, labels: ["agent:ready"] },
       ]],
-      stateLoad: [{ repository: "test-org/test-repo", issueNumber: 10, phase: "reviewed", costs: {} }],
+      stateLoad: [
+        { repository: "test-org/test-repo", issueNumber: 10, phase: "reviewed", costs: {} },
+        null,
+      ],
       workFn,
     });
 
     await runAuto(config, { dryRun: false }, deps);
 
-    assert.strictEqual(workOptions(workFn).resume, false);
+    // #10 was skipped, so #11 should be worked.
+    assert.strictEqual(workFn.mock.calls.length, 1);
+    assert.strictEqual(workOptions(workFn).issueNumber, 11);
   });
 
   it("skips locked issue and tries next candidate", async () => {

@@ -7,7 +7,11 @@ export class GitHubClient {
     const { token } = await this.auth.getInstallationToken();
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Bearer ${token}`);
-    headers.set("Accept", "application/vnd.github+json");
+    // Only default the Accept header if the caller didn't set one explicitly.
+    // (e.g. getPullRequestDiff needs Accept: application/vnd.github.v3.diff)
+    if (!headers.has("Accept")) {
+      headers.set("Accept", "application/vnd.github+json");
+    }
     headers.set("X-GitHub-Api-Version", "2022-11-28");
     headers.set("User-Agent", "democracy-delicious-agent");
 

@@ -4,6 +4,7 @@ import { ZodError } from "zod";
 import { loadConfig } from "./config.js";
 import { runAuto } from "./commands/run.js";
 import { runReview } from "./commands/review.js";
+import { runRespond } from "./commands/respond.js";
 import { runDoctor } from "./commands/doctor.js";
 import { postBootstrapInstructions } from "./commands/post-instructions.js";
 import { runWork } from "./commands/work.js";
@@ -14,6 +15,16 @@ program
   .description("Autonomous development orchestrator for Pizza to the Polls")
   .version("0.1.0")
   .option("-c, --config <path>", "path to agent YAML configuration");
+
+program
+  .command("respond")
+  .description("respond to human feedback on agent PRs")
+  .option("--repo <owner/name>", "restrict to a single repository")
+  .option("--dry-run", "show what would be done", false)
+  .action(async (options: { repo?: string; dryRun: boolean }) => {
+    const config = await loadConfig(program.opts<{ config?: string }>().config);
+    process.exitCode = await runRespond(config, { dryRun: options.dryRun, repo: options.repo });
+  });
 
 program
   .command("review")

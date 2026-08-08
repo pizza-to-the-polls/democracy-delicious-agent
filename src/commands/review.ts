@@ -138,7 +138,15 @@ export async function runReview(config: AgentConfig, options: {
       continue;
     }
 
-    if (options.dryRun) {
+    if (!pr.ciPassed) {
+      console.log("  ⚠ CI failed — flagging for auto-fix.");
+      await client.addPullRequestComment(pr.repository, pr.number,
+        `## CI failure detected\n\nThe following checks did not pass:\n${ci.map((c: {name: string, conclusion: string | null}) => `- **${c.name}**: ${c.conclusion}`).join('\n')}\n\nAn agent will pick this up and attempt a fix.`
+      );
+      await client.addPullRequestLabel(pr.repository, pr.number, "agent:feedback");
+      decisions.push({ accepted: false, merged: false, commentUrl: pr.html_url });
+      continue;
+    }
       console.log("  Dry run — would review + merge.");
       continue;
     }

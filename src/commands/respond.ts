@@ -72,13 +72,15 @@ export async function runRespond(config: AgentConfig, options: {
       );
 
       if (hasFeedbackLabel || humanComments.length > 0) {
+        // For CI-failure or bot-triggered feedback, include all recent comments.
+        const allComments = humanComments.length > 0 ? humanComments.slice(-5) : comments.slice(-5);
         toProcess.push({
           repository: repo,
           number: pr.number,
           title: pr.title,
           headRefName: pr.headRefName,
           baseRefName: pr.baseRefName,
-          humanComments: humanComments.slice(-5), // last 5 human comments
+          humanComments: allComments,
         });
       }
     }

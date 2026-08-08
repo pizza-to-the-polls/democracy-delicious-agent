@@ -5,6 +5,12 @@ import { expandHome } from "../config.js";
 import { runWork } from "./work.js";
 import { StateStore } from "../state.js";
 
+export interface RunAutoDeps {
+  client?: GitHubClient;
+  store?: StateStore;
+  work?: typeof runWork;
+}
+
 /**
  * Auto-discover the next agent:ready issue and work it.
  *
@@ -14,15 +20,18 @@ import { StateStore } from "../state.js";
  */
 export async function runAuto(
   config: AgentConfig,
-  options: { repo?: string; dryRun: boolean }
+  options: { repo?: string; dryRun: boolean },
+  deps: RunAutoDeps = {}
 ): Promise<number> {
-  const keyPath = expandHome(config.paths.githubPrivateKey);
-  const auth = new GitHubAppAuth(
-    config.github.appId,
-    config.github.installationId,
-    keyPath
-  );
-  const client = new GitHubClient(auth);
+  const client = deps.client ?? (() => {
+    const keyPath = expandHome(config.paths.githubPrivateKey);
+    const auth = new GitHubAppAuth(
+      config.github.appId,
+      config.github.installationId,
+      keyPath
+    );
+    return new GitHubClient(auth);
+  })();
 
   const repos = options.repo
     ? [options.repo]
@@ -100,13 +109,13 @@ export async function runAuto(
   }
 
   // Check for existing state — auto-resume if work was already started.
-  const store = new StateStore(config);
+  const store = deps.store ?? new StateStore(config);
   const state = await store.load(next.repository, next.number);
   const resume = !!(state && state.phase !== "created" && state.phase !== "reviewed");
   if (resume) console.log(`Resuming (phase: ${state.phase})…`);
 
-
-  return runWork(config, {
+  const workFn = deps.work ?? runWork;
+  return workFn(config, {
     repository: next.repository,
     issueNumber: next.number,
     dryRun: false,

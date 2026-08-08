@@ -138,7 +138,7 @@ export class GitHubClient {
       pull_request?: unknown;
     }>;
     return issues
-      .filter((i) => !i.pull_request) // Exclude PRs from issue search
+      .filter((i) => !i.pull_request)
       .map((i) => ({
         number: i.number,
         title: i.title,
@@ -151,6 +151,7 @@ export class GitHubClient {
     number: number;
     title: string;
     headRefName: string;
+    baseRefName: string;
     html_url: string;
   }>> {
     const response = await this.request(
@@ -160,13 +161,162 @@ export class GitHubClient {
       number: number;
       title: string;
       head: { ref: string };
+      base: { ref: string };
       html_url: string;
     }>;
     return prs.map((pr) => ({
       number: pr.number,
       title: pr.title,
       headRefName: pr.head.ref,
+      baseRefName: pr.base.ref,
       html_url: pr.html_url,
     }));
+  }
+
+  // ---- Pull request detail ---------------------------------------------------
+
+  async getPullRequest(repository: string, number: number): Promise<{
+    number: number;
+    title: string;
+    headRefName: string;
+    baseRefName: string;
+    html_url: string;
+    labels: Array<{ name: string }>;
+  }> {
+    const response = await this.request(
+      `https://api.github.com/repos/${repository}/pulls/${number}`
+    );
+    const pr = (await response.json()) as {
+      number: number;
+      title: string;
+      head: { ref: string };
+      base: { ref: string };
+      html_url: string;
+      labels: Array<{ name: string }>;
+    };
+    return {
+      number: pr.number,
+      title: pr.title,
+      headRefName: pr.head.ref,
+      baseRefName: pr.base.ref,
+      html_url: pr.html_url,
+      labels: pr.labels,
+    };
+  }
+
+  async getPullRequestChecks(repository: string, number: number): Promise<Array<{
+    name: string;
+    conclusion: string | null;
+    status: string;
+  }>> {
+    // Get the head SHA first.
+    const pr = await this.getPullRequest(repository, number);
+
+    // Use the checks API via the ref name.
+    const response = await this.request(
+      `https://api.github.com/repos/${repository}/commits/${encodeURIComponent(pr.headRefName)}/check-runs?per_page=50`
+    );
+    const data = (await response.json()) as {
+      check_runs: Array<{ name: string; conclusion: string | null; status: string }>;
+    };
+    return data.check_runs.map((check) => ({
+      name: check.name,
+      conclusion: check.conclusion,
+      status: check.status,
+    }));
+  }
+
+  async listPullRequestComments(repository: string, number: number): Promise<Array<{
+    id: number;
+    body: string;
+    user: { login: string };
+  }>> {
+    const response = await this.request(
+      `https://api.github.com/repos/${repository}/pulls/${number}/comments?per_page=100`
+    );
+    return (await response.json()) as Array<{
+      id: number;
+      body: string;
+      user: { login: string };
+    }>;
+  }
+
+  async getPullRequestDiff(repository: string, number: number): Promise<string> {
+    const response = await this.request(
+      `https://api.github.com/repos/${repository}/pulls/${number}`,
+      { headers: { Accept: "application/vnd.github.v3.diff" } },
+    );
+    return response.text();
+  }
+
+  // ---- Labels ----------------------------------------------------------------
+
+  async addPullRequestLabel(repository: string, number: number, label: string): Promise<void> {
+    await this.request(
+      `https://api.github.com/repos/${repository}/issues/${number}/labels`,
+      { method: "POST", body: JSON.stringify({ labels: [label] }) },
+    );
+  }
+
+  async addIssueLabel(repository: string, number: number, label: string): Promise<void> {
+    await this.request(
+      `https://api.github.com/repos/${repository}/issues/${number}/labels`,
+      { method: "POST", body: JSON.stringify({ labels: [label] }) },
+    );
+  }
+
+  async removeIssueLabel(repository: string, number: number, label: string): Promise<void> {
+    await this.request(
+      `https://api.github.com/repos/${repository}/issues/${number}/labels/${encodeURIComponent(label)}`,
+      { method: "DELETE" },
+    );
+  }
+
+  // ---- Merge -----------------------------------------------------------------
+
+  async mergePullRequest(repository: string, number: number, headBranch: string): Promise<void> {
+    await this.request(
+      `https://api.github.com/repos/${repository}/pulls/${number}/merge`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          merge_method: "squash",
+          commit_title: `Merge agent PR #${number}: ${headBranch}`,
+        }),
+      },
+    );
+  }
+
+  // ---- Comments on PRs -------------------------------------------------------
+
+  async addPullRequestComment(repository: string, number: number, body: string): Promise<string> {
+    const response = await this.request(
+      `https://api.github.com/repos/${repository}/issues/${number}/comments`,
+      { method: "POST", body: JSON.stringify({ body }) },
+    );
+    const comment = (await response.json()) as { html_url: string };
+    return comment.html_url;
+  }
+
+  // ---- Linked issues ---------------------------------------------------------
+
+  async getLinkedIssues(repository: string, number: number): Promise<Array<{
+    number: number;
+    title: string;
+  }>> {
+    const pr = await this.request(
+      `https://api.github.com/repos/${repository}/pulls/${number}`
+    );
+    const data = (await pr.json()) as { body: string | null };
+    const body = data.body ?? "";
+
+    // Parse closing keywords: closes/fixes/resolves #NNN
+    const linked: Array<{ number: number; title: string }> = [];
+    const regex = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(body)) !== null) {
+      linked.push({ number: Number.parseInt(match[1], 10), title: "" });
+    }
+    return linked;
   }
 }

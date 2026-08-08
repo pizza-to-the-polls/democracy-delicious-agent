@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { ZodError } from "zod";
 import { loadConfig } from "./config.js";
 import { runAuto } from "./commands/run.js";
+import { runReview } from "./commands/review.js";
 import { runDoctor } from "./commands/doctor.js";
 import { postBootstrapInstructions } from "./commands/post-instructions.js";
 import { runWork } from "./commands/work.js";
@@ -13,6 +14,16 @@ program
   .description("Autonomous development orchestrator for Pizza to the Polls")
   .version("0.1.0")
   .option("-c, --config <path>", "path to agent YAML configuration");
+
+program
+  .command("review")
+  .description("review open agent PRs on integration branches, merge if clean")
+  .option("--repo <owner/name>", "restrict to a single repository")
+  .option("--dry-run", "review only, do not merge", false)
+  .action(async (options: { repo?: string; dryRun: boolean }) => {
+    const config = await loadConfig(program.opts<{ config?: string }>().config);
+    process.exitCode = await runReview(config, { dryRun: options.dryRun, repo: options.repo });
+  });
 
 program
   .command("doctor")
@@ -52,6 +63,8 @@ program
       integrationBranch: options.integrationBranch,
     });
   });
+
+program
 
 program
   .command("post-instructions")

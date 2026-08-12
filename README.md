@@ -4,6 +4,41 @@ A cost-conscious, auditable autonomous development orchestrator for Pizza to the
 
 The project is under active development. Core capabilities — credential verification, issue planning, implementation with checks and review, auto-discovery, and autonomous PR review with merge — are implemented.
 
+## Daemon loop
+
+The default command (`npm run agent`) runs a continuous pipeline:
+
+```mermaid
+flowchart TD
+    START([daemon iteration]) --> RESPOND
+
+    RESPOND["🔧 respond<br/>scan agent PRs for<br/>agent:feedback label"] --> RESPOND_Q{"feedback PRs<br/>found?"}
+    RESPOND_Q -->|yes| RESPOND_FIX["executor tries to fix<br/>(commit → push →<br/>label → agent:in-review)"]
+    RESPOND_Q -->|no| REVIEW
+    RESPOND_FIX --> REVIEW
+
+    REVIEW["🔍 review<br/>scan agent PRs targeting<br/>feature/* branches"] --> REVIEW_Q{"eligible PRs?"}
+    REVIEW_Q -->|CI failed| REVIEW_FEEDBACK["label agent:feedback<br/>skip"]
+    REVIEW_Q -->|CI green| REVIEW_MODEL["reviewer model<br/>reviews diff"]
+    REVIEW_FEEDBACK --> RUN
+    REVIEW_MODEL --> REVIEW_VERDICT{"VERDICT"}
+    REVIEW_VERDICT -->|ACCEPT| MERGE["merge PR<br/>label agent:done"]
+    REVIEW_VERDICT -->|REJECT| REVIEW_SKIP["post comment<br/>skip"]
+    REVIEW_Q -->|no eligible PRs| RUN
+    MERGE --> RUN
+    REVIEW_SKIP --> RUN
+
+    RUN["🚀 run<br/>scan issues for<br/>agent:ready label"] --> RUN_Q{"eligible issues<br/>without open PR?"}
+    RUN_Q -->|yes| WORK["plan → implement →<br/>checks → review →<br/>create PR"]
+    RUN_Q -->|no| IDLE["backlog clear"]
+    WORK --> DONE
+    IDLE --> DONE
+
+    DONE([iteration complete]) --> START
+```
+
+Each iteration logs a structured timeline to `~/PizzaAgent/logs/daemon-YYYY-MM-DD.jsonl` for auditing.
+
 ## Architecture principles
 
 - GitHub Issues and Projects are durable workflow state.

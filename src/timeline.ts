@@ -20,16 +20,14 @@ export interface TimelineEntry {
   durationMs?: number;
 }
 
-let _logPath: string | null = null;
 let _iteration = 0;
 
 async function logPath(config: { paths: { workspace: string } }): Promise<string> {
-  if (_logPath) return _logPath;
+  // Computed per call so a long-running daemon rolls over to a new file at midnight.
   const dir = resolve(expandHome(config.paths.workspace), "logs");
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const today = new Date().toISOString().slice(0, 10);
-  _logPath = resolve(dir, `daemon-${today}.jsonl`);
-  return _logPath;
+  return resolve(dir, `daemon-${today}.jsonl`);
 }
 
 export async function logTimeline(

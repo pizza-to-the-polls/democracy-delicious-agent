@@ -14,6 +14,8 @@ export interface WorkState {
   plan?: string;
   review?: string;
   lastError?: string;
+  /** Number of bounded repair cycles consumed (capped by limits.maxRepairCycles). */
+  repairs?: number;
   costs: Record<string, number>;
   updatedAt: string;
 }

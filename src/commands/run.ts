@@ -1,4 +1,4 @@
-import { mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AgentConfig } from "../config.js";
 import { GitHubAppAuth } from "../github/auth.js";
@@ -53,6 +53,8 @@ export async function runAuto(
   }> = [];
 
   for (const repo of repos) {
+    // Fetch open PRs once per repo (not per issue) to avoid N+1 API calls.
+    const openPRs = await client.listOpenPullRequests(repo);
     // Search issues with agent:ready label.
     const issues = await client.searchIssues(repo, ["agent:ready"]);
     for (const issue of issues) {
@@ -74,7 +76,6 @@ export async function runAuto(
       }
 
       // Check if there's already an open PR for this issue.
-      const openPRs = await client.listOpenPullRequests(repo);
       const alreadyWorking = openPRs.some(
         (pr) =>
           pr.headRefName.startsWith(`agent/${issue.number}-`) ||
@@ -157,26 +158,57 @@ export async function runAuto(
 // Default file-based locking (single-machine, multi-process safe)
 // ---------------------------------------------------------------------------
 
-function lockPath(config: AgentConfig, repository: string, issueNumber: number): string {
-  return resolve(expandHome(config.paths.workspace), "locks", `${repository.replace("/", "--")}-${issueNumber}.lock`);
+function lockPath(config: AgentConfig, repository: string, issueNumber: string | number): string {
+  return resolve(expandHome(config.paths.workspace), "locks", `${String(repository).replace("/", "--")}-${issueNumber}.lock`);
 }
 
-function defaultTryLock(config: AgentConfig) {
+/** Best-effort liveness check: a dead holder's lock can be taken over. */
+export function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM means the process exists but is owned by another user — treat as alive.
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+async function acquireLockFile(path: string): Promise<boolean> {
+  try {
+    // wx = exclusive write, fails with EEXIST if lock already held
+    await writeFile(path, `${process.pid}\n${new Date().toISOString()}`, { flag: "wx", mode: 0o600 });
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    return false;
+  }
+}
+
+export function defaultTryLock(config: AgentConfig) {
   return async (repository: string, issueNumber: number): Promise<boolean> => {
     const path = lockPath(config, repository, issueNumber);
     await mkdir(resolve(path, ".."), { recursive: true, mode: 0o700 });
+    if (await acquireLockFile(path)) return true;
+
+    // Lock exists — check whether the holder is still alive. A crashed daemon
+    // leaves a stale lock behind; reclaim it instead of skipping the issue forever.
     try {
-      // wx = exclusive write, fails with EEXIST if lock already held
-      await writeFile(path, `${process.pid}\n${new Date().toISOString()}`, { flag: "wx", mode: 0o600 });
-      return true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
-      throw error;
+      const content = await readFile(path, "utf8");
+      const pid = Number.parseInt(content.split("\n")[0] ?? "", 10);
+      if (Number.isFinite(pid) && pid !== process.pid && !processAlive(pid)) {
+        console.log(`Reclaiming stale lock ${path} (pid ${pid} is gone).`);
+        await rm(path, { force: true });
+        return acquireLockFile(path);
+      }
+    } catch {
+      // Lock vanished between the failed acquire and the read — try once more.
+      return acquireLockFile(path);
     }
+    return false;
   };
 }
 
-function defaultUnlock(config: AgentConfig) {
+export function defaultUnlock(config: AgentConfig) {
   return async (repository: string, issueNumber: number): Promise<void> => {
     try {
       await rm(lockPath(config, repository, issueNumber), { force: true });

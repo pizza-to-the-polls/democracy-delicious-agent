@@ -108,6 +108,14 @@ npm run agent -- daemon --once         # single iteration
 npm run agent -- daemon --dry-run      # plan only, no mutations
 npm run agent -- daemon --poll 30      # faster polling when idle
 
+# Inspect local agent state (locks, work state, worktrees, timeline, spend)
+npm run agent -- status
+
+# Reclaim stale locks and remove orphaned worktrees
+npm run agent -- clean                 # orphaned worktrees + dead-holder locks
+npm run agent -- clean --all           # also state files and session transcripts
+npm run agent -- clean --dry-run       # preview only
+
 # Run the daemon in multiple tabs — file-based locking prevents collisions
 # Tab 1:  npm run agent
 # Tab 2:  npm run agent
@@ -139,7 +147,7 @@ npm run agent -- review --repo pizza-to-the-polls/pizzabase
 
 ### `daemon` (default command) — continuous autonomous loop
 
-Runs indefinitely: discovers `agent:ready` issues → implements them with the full `work` pipeline → creates PRs → reviews open agent PRs → merges accepted ones → repeats. File-based locking (`~/PizzaAgent/locks/`) lets you run multiple daemon instances in separate terminals — they'll never collide on the same issue.
+Runs indefinitely (or once with `--once`): discovers `agent:ready` issues → implements them with the full `work` pipeline → creates PRs → reviews open agent PRs → merges accepted ones → sleeps `--poll` seconds → repeats. File-based locking (`~/PizzaAgent/locks/`) lets you run multiple daemon instances in separate terminals — they'll never collide on the same issue, and locks left behind by a crashed daemon are automatically reclaimed once their holder process is gone.
 
 ```bash
 npm run agent                    # daemon mode (no subcommand needed)
@@ -157,7 +165,15 @@ Requires an open issue carrying `agent:ready`. Creates a clean clone and worktre
 
 ### `review` — autonomous PR review and merge
 
-Finds open agent PRs (`agent/*`) targeting `feature/*` branches. Runs the reviewer model against the diff, posts findings as a PR comment, and merges when VERDICT: ACCEPT and CI is green. PRs with human review comments are flagged with `agent:needs-human` and skipped. Updates linked issue labels (`agent:in-review` → `agent:done`).
+Finds open agent PRs (`agent/*`) targeting `feature/*` branches. Runs the reviewer model against the diff, posts findings as a PR comment, and merges when VERDICT: ACCEPT and CI is green. PRs with human review comments are flagged with `agent:needs-human` and skipped — the respond loop never auto-fixes those; they require manual intervention. Updates linked issue labels (`agent:in-review` → `agent:done`).
+
+### `status` — inspect local state (read-only)
+
+Shows held locks (with PID liveness and age), saved per-issue work state with phase and spend, worktrees, session count, the latest timeline events, and current OpenRouter usage. Never talks to GitHub or spends model budget.
+
+### `clean` — reclaim disk space and stale locks
+
+Removes orphaned worktrees (whose git metadata was pruned) and locks whose holder process is no longer alive. With `--all`, also removes retained state files and session transcripts.
 
 Maintainer-only bootstrap helper:
 
@@ -188,12 +204,15 @@ Implemented:
 - independent review with VERDICT: ACCEPT/REJECT
 - recovery journal with `--resume` repair cycles
 - auto-discovery of `agent:ready` issues across repos (`run`)
-- **continuous daemon mode** — default command, multi-instance safe via file locks
+- **continuous daemon mode** — default command, multi-instance safe via file locks with automatic stale-lock takeover
 - child PR creation targeting feature integration branches
 - autonomous PR review + merge (`review`)
-- human-feedback detection and `agent:needs-human` flagging
+- human-feedback response (`respond`) gated on local checks — nothing is pushed unless format/lint/typecheck/test pass locally
+- `agent:needs-human` escalation strictly honored (never auto-fixed)
+- bounded repair cycles enforced via `limits.maxRepairCycles`
+- read-only state inspection (`status`) and workspace cleanup (`clean`)
 - linked issue label management
-- test suite (36 tests, 0 failures)
+- test suite (59 tests, 0 failures)
 - bootstrap issue template
 
 Not enabled yet:

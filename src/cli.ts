@@ -6,9 +6,11 @@ import { runAuto } from "./commands/run.js";
 import { runReview } from "./commands/review.js";
 import { runRespond } from "./commands/respond.js";
 import { runDoctor } from "./commands/doctor.js";
+import { runClean } from "./commands/clean.js";
+import { runStatus } from "./commands/status.js";
+import { runDaemon } from "./commands/daemon.js";
 import { postBootstrapInstructions } from "./commands/post-instructions.js";
 import { runWork } from "./commands/work.js";
-import { logTimeline, nextIteration } from "./timeline.js";
 
 const program = new Command();
 program
@@ -16,6 +18,23 @@ program
   .description("Autonomous development orchestrator for Pizza to the Polls")
   .version("0.1.0")
   .option("-c, --config <path>", "path to agent YAML configuration");
+
+function daemonOptions<T extends Command>(command: T): T {
+  command
+    .option("--once", "run a single iteration then exit", false)
+    .option("--dry-run", "plan/review only, no mutations", false)
+    .option("--poll <seconds>", "seconds to sleep between iterations when looping", (v) => Number.parseInt(v, 10), 300);
+  return command;
+}
+
+daemonOptions(
+  program
+    .command("daemon")
+    .description("continuous loop: respond → review → discover + work (default command)"),
+).action(async (options: { once: boolean; dryRun: boolean; poll: number }) => {
+  const config = await loadConfig(program.opts<{ config?: string }>().config);
+  process.exitCode = await runDaemon(config, { once: options.once, dryRun: options.dryRun, pollSeconds: options.poll });
+});
 
 program
   .command("respond")
@@ -43,6 +62,24 @@ program
   .action(async () => {
     const config = await loadConfig(program.opts<{ config?: string }>().config);
     process.exitCode = await runDoctor(config);
+  });
+
+program
+  .command("status")
+  .description("show local agent state: locks, work state, worktrees, timeline, spend")
+  .action(async () => {
+    const config = await loadConfig(program.opts<{ config?: string }>().config);
+    process.exitCode = await runStatus(config);
+  });
+
+program
+  .command("clean")
+  .description("remove orphaned worktrees; with --all also state files, sessions, stale locks")
+  .option("--all", "remove all retained worktree/state/session data, not just orphans", false)
+  .option("--dry-run", "preview what would be removed", false)
+  .action(async (options: { all: boolean; dryRun: boolean }) => {
+    const config = await loadConfig(program.opts<{ config?: string }>().config);
+    process.exitCode = await runClean(config, { all: options.all, dryRun: options.dryRun });
   });
 
 program
@@ -85,57 +122,9 @@ program
   });
 
 // Default: daemon loop — respond → review → discover.
-program.action(async () => {
+daemonOptions(program).action(async (options: { once: boolean; dryRun: boolean; poll: number }) => {
   const config = await loadConfig(program.opts<{ config?: string }>().config);
-
-  const iter = nextIteration();
-  const startTime = Date.now();
-  console.log(`\n━━━ Iteration ${iter} started at ${new Date().toISOString()} ━━━`);
-  await logTimeline(config, { ts: new Date().toISOString(), event: "iteration_start", iteration: iter, status: "start" });
-
-  // Phase 1: respond to feedback.
-  let exitCode: number;
-  const respondStart = Date.now();
-  try {
-    exitCode = await runRespond(config, { dryRun: false });
-    await logTimeline(config, { ts: new Date().toISOString(), event: "phase_done", phase: "respond", iteration: iter, status: exitCode === 0 ? "ok" : "fail", durationMs: Date.now() - respondStart });
-  } catch (err) {
-    console.error("respond phase crashed:", err);
-    await logTimeline(config, { ts: new Date().toISOString(), event: "phase_done", phase: "respond", iteration: iter, status: "fail", detail: err instanceof Error ? err.message : String(err), durationMs: Date.now() - respondStart });
-    exitCode = 1;
-  }
-
-  // Phase 2: review PRs.
-  if (exitCode === 0) {
-    const reviewStart = Date.now();
-    try {
-      exitCode = await runReview(config, { dryRun: false });
-      await logTimeline(config, { ts: new Date().toISOString(), event: "phase_done", phase: "review", iteration: iter, status: exitCode === 0 ? "ok" : "fail", durationMs: Date.now() - reviewStart });
-    } catch (err) {
-      console.error("review phase crashed:", err);
-      await logTimeline(config, { ts: new Date().toISOString(), event: "phase_done", phase: "review", iteration: iter, status: "fail", detail: err instanceof Error ? err.message : String(err), durationMs: Date.now() - reviewStart });
-      exitCode = 1;
-    }
-  }
-
-  // Phase 3: discover and work next issue.
-  if (exitCode === 0) {
-    const runStart = Date.now();
-    try {
-      exitCode = await runAuto(config, { dryRun: false });
-      await logTimeline(config, { ts: new Date().toISOString(), event: "phase_done", phase: "run", iteration: iter, status: exitCode === 0 ? "ok" : "fail", durationMs: Date.now() - runStart });
-    } catch (err) {
-      console.error("run phase crashed:", err);
-      await logTimeline(config, { ts: new Date().toISOString(), event: "phase_done", phase: "run", iteration: iter, status: "fail", detail: err instanceof Error ? err.message : String(err), durationMs: Date.now() - runStart });
-      exitCode = 1;
-    }
-  }
-
-  const totalMs = Date.now() - startTime;
-  console.log(`━━━ Iteration ${iter} done (${totalMs}ms, exit ${exitCode}) ━━━\n`);
-  await logTimeline(config, { ts: new Date().toISOString(), event: "iteration_end", iteration: iter, status: exitCode === 0 ? "ok" : "fail", durationMs: totalMs });
-
-  process.exitCode = exitCode;
+  process.exitCode = await runDaemon(config, { once: options.once, dryRun: options.dryRun, pollSeconds: options.poll });
 });
 
 try {

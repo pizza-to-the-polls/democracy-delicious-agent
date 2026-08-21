@@ -5,6 +5,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { GitHubClient } from "../github/client.js";
+import { isFeedbackEligible } from "./respond.js";
 
 // ---------------------------------------------------------------------------
 // Feedback detection
@@ -62,33 +63,19 @@ describe("feedback detection", () => {
 
 describe("respond eligibility", () => {
   it("eligible when PR has agent:feedback label", () => {
-    const pr = {
-      labels: ["agent:feedback", "agent:in-review"],
-      headRefName: "agent/10-fix-thing",
-    };
-    const hasFeedback = pr.labels.includes("agent:feedback");
-    const isAgentPR = pr.headRefName.startsWith("agent/");
-    assert.strictEqual(hasFeedback && isAgentPR, true);
+    assert.strictEqual(isFeedbackEligible(["agent:feedback", "agent:in-review"]), true);
   });
 
-  it("also eligible with agent:needs-human label", () => {
-    const pr = {
-      labels: ["agent:needs-human"],
-      headRefName: "agent/10-fix-thing",
-    };
-    const eligible = pr.labels.some((l) => ["agent:feedback", "agent:needs-human"].includes(l));
-    assert.strictEqual(eligible, true);
+  it("NOT eligible with agent:needs-human label — it means a human must intervene", () => {
+    assert.strictEqual(isFeedbackEligible(["agent:needs-human"]), false);
+  });
+
+  it("NOT eligible when needs-human is present even alongside feedback", () => {
+    assert.strictEqual(isFeedbackEligible(["agent:feedback", "agent:needs-human"]), false);
   });
 
   it("not eligible without feedback label", () => {
-    const pr = { labels: ["agent:in-review"], headRefName: "agent/10-fix-thing" };
-    const eligible = pr.labels.some((l) => ["agent:feedback", "agent:needs-human"].includes(l));
-    assert.strictEqual(eligible, false);
-  });
-
-  it("not eligible for non-agent PRs", () => {
-    const pr = { labels: ["agent:feedback"], headRefName: "dependabot/npm/foo" };
-    assert.strictEqual(pr.headRefName.startsWith("agent/"), false);
+    assert.strictEqual(isFeedbackEligible(["agent:in-review"]), false);
   });
 });
 
@@ -124,12 +111,12 @@ describe("label transitions", () => {
     assert.deepStrictEqual(after, ["agent:in-review"]);
   });
 
-  it("removes needs-human and adds in-review label after response", () => {
+  it("never transitions a needs-human PR — respond must not touch it at all", () => {
+    // agent:needs-human is an escalation to a human; isFeedbackEligible rejects
+    // it, so no label transition ever happens for such a PR.
     const labels = ["agent:needs-human"];
-    const after = labels
-      .filter((l) => l !== "agent:feedback" && l !== "agent:needs-human")
-      .concat("agent:in-review");
-    assert.deepStrictEqual(after, ["agent:in-review"]);
+    assert.strictEqual(isFeedbackEligible(labels), false);
+    assert.deepStrictEqual(labels, ["agent:needs-human"]); // unchanged
   });
 
   it("only resets labels when a commit was made (no empty-commit infinite loop)", () => {

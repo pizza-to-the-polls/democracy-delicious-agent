@@ -34,21 +34,6 @@ const CODING_STANDARDS = `
 - The orchestrator will run all three checks after you finish — your work will be rejected if any fail.
 `;
 
-function approvedInputPaths(repository: string, issueNumber: number): string[] {
-  if (repository === "pizza-to-the-polls/pizzabase") {
-    if ([152, 155, 157, 161].includes(issueNumber)) {
-      return [
-        "~/Desktop/brooklyn-ny-96030c3e.jpeg",
-        "~/Desktop/redondo-beach-ca-25029a92.jpeg",
-        "~/Desktop/los-angeles-ca-ef6543ce.png",
-      ];
-    }
-    // SightEngine integration (#160) needs no binary fixtures.
-    return [];
-  }
-  return [];
-}
-
 function issuePrompt(
   issue: Awaited<ReturnType<GitHubClient["getIssue"]>>,
   comments: Awaited<ReturnType<GitHubClient["listIssueComments"]>>,
@@ -94,7 +79,7 @@ function repairPrompt(options: {
   checks: string;
   diff: string;
 }): string {
-  return `${options.issue}\n\n# Planning notes\n${options.plan}\n\n# Independent review findings\n${options.review}\n\n# Failed check output\n${options.checks}\n\n# Current diff\n${options.diff}\n\nRepair every blocking finding. Preserve the approved product clarification that the response includes full EXIF plus an explainable heuristic review summary; do not revert that requirement merely for backward compatibility. Fix formatting, use metadata-preserving fixtures derived from .agent-inputs/, evaluate screenshot markers before serialization or decode them correctly, and add the bounded follow-up S3 read strategy. Modify project files only and do not attempt shell commands.`;
+  return `${options.issue}\n\n# Planning notes\n${options.plan}\n\n# Independent review findings\n${options.review}\n\n# Failed check output\n${options.checks}\n\n# Current diff\n${options.diff}\n\nRepair every blocking finding listed above. Make minimal, focused changes; do not revert approved requirements from the issue discussion merely for backward compatibility.`;
 }
 
 export async function runWork(config: AgentConfig, options: {
@@ -136,7 +121,7 @@ export async function runWork(config: AgentConfig, options: {
       options.repository,
       issue.number,
       issue.title,
-      approvedInputPaths(options.repository, issue.number),
+      [],
       options.integrationBranch,
     );
     const priorPhase = state.phase;
@@ -182,6 +167,9 @@ export async function runWork(config: AgentConfig, options: {
 
     await installDependencies(config, options.repository, workspace.worktreePath);
     const resumingRepair = options.resume && priorPhase === "needs-repair" && Boolean(state.review);
+    if (resumingRepair && (state.repairs ?? 0) >= config.limits.maxRepairCycles) {
+      throw new Error(`Issue has exhausted its ${config.limits.maxRepairCycles} repair cycles; manual intervention required.`);
+    }
     if (options.reviewOnly) {
       if (!options.resume) throw new Error("--review-only requires --resume");
       console.log("Review-only recovery: preserving existing worktree changes.");
@@ -204,7 +192,7 @@ export async function runWork(config: AgentConfig, options: {
 This is the single bounded repair cycle. Fix every blocking review finding.`,
         sessionName: `${options.repository.replace("/", "-")}-${issue.number}-repair`,
       });
-      state = await store.save({ ...state, phase: "implemented", costs: { ...state.costs, repair: repair.cost } });
+      state = await store.save({ ...state, phase: "implemented", repairs: (state.repairs ?? 0) + 1, costs: { ...state.costs, repair: repair.cost } });
       console.log(`Repair cost: $${repair.cost.toFixed(4)}`);
     } else {
       const executor = await runAgentSession({
@@ -254,8 +242,6 @@ This is an independent read-only review. Be skeptical and concise. Check that: t
     console.log(`Authoritative OpenRouter usage: $${authoritativeUsage.usage.toFixed(2)}; remaining: ${authoritativeUsage.remaining === null ? "unknown" : `$${authoritativeUsage.remaining.toFixed(2)}`}`);
     console.log(`Worktree retained at ${workspace.worktreePath}`);
 
-    if (options.dryRun) return 0;
-
     if (state.phase === "reviewed") {
       // Commit, push, and create PR targeting the integration branch.
       try {
@@ -277,7 +263,7 @@ This is an independent read-only review. Be skeptical and concise. Check that: t
           head: workspace.branch,
           base: integrationBranch,
           title: `fix: ${issue.title} (#${issue.number})`,
-          body: `Implements #${issue.number}.\n\n## Review\n\n${(state.review ?? "").split("\n").slice(0, 12).join("\n")}\n\n## Checks\n\n${checkText}`,
+          body: `Closes #${issue.number}.\n\n## Review\n\n${(state.review ?? "").split("\n").slice(0, 12).join("\n")}\n\n## Checks\n\n${checkText}`,
         });
         console.log(`PR: ${prUrl}`);
         }

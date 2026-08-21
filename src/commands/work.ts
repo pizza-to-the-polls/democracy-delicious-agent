@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import type { AgentConfig } from "../config.js";
 import { expandHome } from "../config.js";
 import { GitHubAppAuth } from "../github/auth.js";
-import { GitHubClient } from "../github/client.js";
+import { extractClosingRefs, GitHubClient } from "../github/client.js";
 import { WorkspaceManager } from "../workspace.js";
 import { StateStore, type WorkState } from "../state.js";
 import { installDependencies, runChecks, formatCheckResults } from "../checks.js";
@@ -259,11 +259,17 @@ This is an independent read-only review. Be skeptical and concise. Check that: t
         console.error(`Commit failed: ${commitResult.stderr}`);
       } else {
         await runProcess("git", ["-C", workspace.worktreePath, "push", "-u", "origin", workspace.branch], { env });
+        // Include closing-keyword refs from the issue body so GitHub links
+        // every related issue to this PR.
+        const extraRefs = extractClosingRefs(issue.body).filter((n) => n !== issue.number);
+        const closesLine = extraRefs.length > 0
+          ? `Closes #${issue.number}, ${extraRefs.map((n) => `#${n}`).join(", ")}.`
+          : `Closes #${issue.number}.`;
         const prUrl = await client.createPullRequest(options.repository, {
           head: workspace.branch,
           base: integrationBranch,
           title: `fix: ${issue.title} (#${issue.number})`,
-          body: `Closes #${issue.number}.\n\n## Review\n\n${(state.review ?? "").split("\n").slice(0, 12).join("\n")}\n\n## Checks\n\n${checkText}`,
+          body: `${closesLine}\n\n## Review\n\n${(state.review ?? "").split("\n").slice(0, 12).join("\n")}\n\n## Checks\n\n${checkText}`,
         });
         console.log(`PR: ${prUrl}`);
         }

@@ -1,5 +1,20 @@
 import type { GitHubAppAuth } from "./auth.js";
 
+/**
+ * Extract issue numbers referenced with GitHub closing keywords
+ * (closes/closed/fix/fixes/fixed/resolves/resolved #NNN), deduplicated,
+ * in order of first appearance.
+ */
+export function extractClosingRefs(body: string | null): number[] {
+  const refs = new Set<number>();
+  const regex = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(body ?? "")) !== null) {
+    refs.add(Number.parseInt(match[1], 10));
+  }
+  return [...refs];
+}
+
 export class GitHubClient {
   constructor(private readonly auth: GitHubAppAuth) {}
 
@@ -278,6 +293,18 @@ export class GitHubClient {
 
   // ---- Merge -----------------------------------------------------------------
 
+  /**
+   * Ask GitHub to update the PR branch with its base branch (equivalent to
+   * the "Update branch" button). Returns true if an update was scheduled.
+   */
+  async updatePullRequestBranch(repository: string, number: number): Promise<boolean> {
+    const response = await this.request(
+      `https://api.github.com/repos/${repository}/pulls/${number}/update-branch`,
+      { method: "PUT", body: JSON.stringify({}) },
+    );
+    return response.status === 202 || response.ok;
+  }
+
   async mergePullRequest(repository: string, number: number, headBranch: string): Promise<void> {
     await this.request(
       `https://api.github.com/repos/${repository}/pulls/${number}/merge`,
@@ -316,10 +343,8 @@ export class GitHubClient {
 
     // Parse closing keywords: closes/fixes/resolves #NNN
     const linked: Array<{ number: number; title: string }> = [];
-    const regex = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
-    let match: RegExpExecArray | null;
-    while ((match = regex.exec(body)) !== null) {
-      linked.push({ number: Number.parseInt(match[1], 10), title: "" });
+    for (const number of extractClosingRefs(body)) {
+      linked.push({ number, title: "" });
     }
     return linked;
   }

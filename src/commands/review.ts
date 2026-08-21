@@ -208,11 +208,29 @@ export async function runReview(config: AgentConfig, options: {
           } catch { /* non-blocking */ }
         }
       } catch (err) {
-        console.log(`  ❌ Merge failed: ${err instanceof Error ? err.message : String(err)}`);
+        const message = err instanceof Error ? err.message : String(err);
+        console.log(`  ❌ Merge failed: ${message}`);
+        // If the merge failed due to conflicts with the base branch, ask GitHub
+        // to update the PR branch so CI can re-run; a later iteration retries.
+        if (/405|merge conflicts/i.test(message)) {
+          try {
+            const updated = await client.updatePullRequestBranch(pr.repository, pr.number);
+            if (updated) {
+              console.log(`  🔄 Base branch changed — requested branch update; will retry after CI.`);
+              await client.addPullRequestComment(pr.repository, pr.number,
+                `## Merge deferred — branch update requested\n\nThe base branch moved ahead. The PR branch has been queued for update; once CI is green this PR will be reviewed and merged on a subsequent iteration.\n\n_— democracy-delicious-agent_`
+              );
+              await logTimeline(config, { ts: new Date().toISOString(), event: "review", pr: pr.number, status: "ok", detail: "merge conflict — branch update requested" });
+              merged = false;
+              decisions.push({ accepted, merged, commentUrl });
+              continue;
+            }
+          } catch { /* fall through to normal failure path */ }
+        }
         await client.addPullRequestComment(pr.repository, pr.number,
-          `## Merge failed\n\n${err instanceof Error ? err.message : String(err)}\n\n_— democracy-delicious-agent_`
+          `## Merge failed\n\n${message}\n\n_— democracy-delicious-agent_`
         );
-        await logTimeline(config, { ts: new Date().toISOString(), event: "review", pr: pr.number, status: "fail", detail: `merge error: ${err instanceof Error ? err.message : String(err)}` });
+        await logTimeline(config, { ts: new Date().toISOString(), event: "review", pr: pr.number, status: "fail", detail: `merge error: ${message}` });
         merged = false;
       }
     } else if (accepted && !pr.ciPassed) {

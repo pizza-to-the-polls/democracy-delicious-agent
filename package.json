@@ -12,7 +12,7 @@
     "agent": "tsx src/cli.ts",
     "doctor": "tsx src/cli.ts doctor",
     "post-instructions": "tsx src/cli.ts post-instructions",
-    "test": "node --import tsx --test 'src/**/*.test.ts'"
+    "test": "node --import tsx --test --experimental-test-isolation=none src/**/*.test.ts"
   },
   "keywords": [
     "pizza-to-the-polls",

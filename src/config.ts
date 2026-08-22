@@ -13,7 +13,7 @@ const modelRoleSchema = z.object({
   thinking: thinkingLevelSchema,
 });
 
-const repositoryConfigSchema = z.object({
+export const repositoryConfigSchema = z.object({
   nodeVersion: z.string().min(1),
   testDatabasePrefix: z.string().regex(/^[a-zA-Z0-9_]+$/).optional(),
   checks: z.object({

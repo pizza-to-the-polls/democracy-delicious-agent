@@ -172,7 +172,7 @@ export async function runWork(config: AgentConfig, options: {
     }
     if (options.reviewOnly) {
       if (!options.resume) throw new Error("--review-only requires --resume");
-      console.log("Review-only recovery: preserving existing worktree changes.");
+      console.log("Review-only recovery: preserving existing worktree changes (auto-fix skipped).");
     } else if (resumingRepair) {
       const usage = await getOpenRouterUsage();
       assertBudgetAvailable(usage, config.budget, 2);
@@ -213,7 +213,7 @@ Implement the approved plan. You cannot use arbitrary shell commands; the orches
       console.log(`Executor cost: $${executor.cost.toFixed(4)}`);
     }
 
-    const checkResults = await runChecks({ config, repository: options.repository, issueNumber: issue.number, cwd: workspace.worktreePath });
+    const checkResults = await runChecks({ config, repository: options.repository, issueNumber: issue.number, cwd: workspace.worktreePath, skipFix: options.reviewOnly });
     const checkText = formatCheckResults(checkResults);
     const checksPassed = checkResults.length > 0 && checkResults.every((result) => result.exitCode === 0);
     state = await store.save({ ...state, phase: checksPassed ? "checked" : "needs-repair", lastError: checksPassed ? undefined : checkText });

@@ -47,8 +47,8 @@ repositories:
 
 budget:
   dailyUsd: 30
-  autonomousStopUsd: 80
-  absoluteUsd: 90
+  autonomousStopUsd: 120
+  absoluteUsd: 130
 
 limits:
   globalConcurrency: 2

@@ -70,6 +70,14 @@ export async function runChecks(options: {
     const wrapped = `source "$HOME/.nvm/nvm.sh" && nvm use ${repoConfig.nodeVersion} >/dev/null && ${command}`;
     const result = await runShell(wrapped, { cwd: options.cwd, env, timeoutMs: 20 * 60_000 });
     results.push(result);
+
+    // After a successful fix step, commit any auto-fixed changes so the
+    // reviewer and subsequent check steps see the cleaned code.
+    if (kind === "fix" && result.exitCode === 0) {
+      await runProcess("git", ["-C", options.cwd, "add", "-u"]).catch(() => {});
+      await runProcess("git", ["-C", options.cwd, "commit", "--amend", "--no-edit"]).catch(() => {});
+    }
+
     // A failed fix shouldn't bail — let the reviewer see the raw lint output too.
     if (result.exitCode !== 0 && kind === "check") break;
   }

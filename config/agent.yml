@@ -18,7 +18,7 @@ models:
     id: deepseek/deepseek-v4-flash
     thinking: medium
   executor:
-    id: deepseek/deepseek-v4-pro
+    id: z-ai/glm-5.3-flash
     thinking: medium
   reviewer:
     id: google/gemini-2.5-flash-lite
@@ -47,8 +47,8 @@ repositories:
 
 budget:
   dailyUsd: 30
-  autonomousStopUsd: 120
-  absoluteUsd: 130
+  autonomousStopUsd: 250
+  absoluteUsd: 260
 
 limits:
   globalConcurrency: 2

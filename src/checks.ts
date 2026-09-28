@@ -71,12 +71,14 @@ export async function runChecks(options: {
     const result = await runShell(wrapped, { cwd: options.cwd, env, timeoutMs: 20 * 60_000 });
     results.push(result);
 
-    // After a successful fix step, commit any auto-fixed changes so the
-    // reviewer and subsequent check steps see the cleaned code.
-    if (kind === "fix" && result.exitCode === 0) {
-      await runProcess("git", ["-C", options.cwd, "add", "-u"]).catch(() => {});
-      await runProcess("git", ["-C", options.cwd, "commit", "--amend", "--no-edit"]).catch(() => {});
-    }
+    // NOTE: deliberately NO commit here. At this point in the pipeline the
+    // executor's changes are uncommitted working-tree modifications (the
+    // commit happens in work.ts only after review acceptance), so any
+    // commit — especially `--amend` — would fold the executor's work into
+    // the *base commit* and rewrite upstream history (see issue #11).
+    // Auto-fixed files stay in the working tree: subsequent check steps
+    // and the reviewer's diff()/status() all operate on this same worktree
+    // and see the cleaned code without a commit.
 
     // A failed fix shouldn't bail — let the reviewer see the raw lint output too.
     if (result.exitCode !== 0 && kind === "check") break;

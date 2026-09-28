@@ -11,6 +11,8 @@ export interface WorkspaceInfo {
   worktreePath: string;
   branch: string;
   baseBranch: string;
+  /** The ref the branch was actually cut from (`origin/<baseBranch>` or `origin/master`). */
+  baseRef: string;
 }
 
 function slugify(value: string): string {
@@ -88,6 +90,6 @@ export class WorkspaceManager {
       }
     }
 
-    return { repository, repositoryPath, worktreePath, branch, baseBranch };
+    return { repository, repositoryPath, worktreePath, branch, baseBranch, baseRef };
   }
 }

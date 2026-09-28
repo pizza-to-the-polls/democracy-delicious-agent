@@ -44,8 +44,16 @@ function issuePrompt(
   return `# GitHub issue #${issue.number}: ${issue.title}\n\n${issue.body ?? ""}${discussion}`;
 }
 
-async function diff(worktree: string): Promise<string> {
-  const tracked = await runProcess("git", ["-C", worktree, "diff", "--no-ext-diff", "--", "."], { timeoutMs: 30_000 });
+async function diff(worktree: string, baseRef?: string): Promise<string> {
+  // Prefer the branch point as the diff base so committed-but-unpushed work
+  // (e.g. a resumed cycle whose changes were already committed) reaches the
+  // reviewer. Fall back to HEAD when the ref is unknown or unresolvable.
+  let base = "HEAD";
+  if (baseRef) {
+    const resolvable = await runProcess("git", ["-C", worktree, "rev-parse", "--verify", "--quiet", baseRef], { timeoutMs: 30_000 });
+    if (resolvable.exitCode === 0) base = baseRef;
+  }
+  const tracked = await runProcess("git", ["-C", worktree, "diff", "--no-ext-diff", base, "--", "."], { timeoutMs: 30_000 });
   assertSuccess(tracked);
   const untracked = await runProcess("git", ["-C", worktree, "ls-files", "--others", "--exclude-standard"], { timeoutMs: 30_000 });
   assertSuccess(untracked);
@@ -66,6 +74,24 @@ async function status(worktree: string): Promise<string> {
   const result = await runProcess("git", ["-C", worktree, "status", "--short"], { timeoutMs: 30_000 });
   assertSuccess(result);
   return result.stdout;
+}
+
+/**
+ * True when the worktree contains agent work: uncommitted working-tree
+ * changes OR committed-but-unpushed commits relative to the branch point.
+ *
+ * The second half matters: interrupted/resumed cycles can legitimately
+ * have committed changes, and a status-only check would false-positive
+ * with "Executor produced no repository changes" (issue #11).
+ */
+export async function hasRepositoryChanges(worktree: string, baseRef: string): Promise<boolean> {
+  const workingTree = await status(worktree);
+  if (workingTree.trim()) return true;
+  const unpushed = await runProcess("git", ["-C", worktree, "rev-list", "--count", `${baseRef}..HEAD`], { timeoutMs: 30_000 });
+  // Missing base ref (e.g. pruned remote): fall back to status-only detection
+  // rather than failing the whole cycle.
+  if (unpushed.exitCode !== 0) return false;
+  return parseInt(unpushed.stdout.trim(), 10) > 0;
 }
 
 function reviewAccepted(text: string): boolean {
@@ -185,7 +211,7 @@ export async function runWork(config: AgentConfig, options: {
           plan,
           review: state.review ?? "",
           checks: state.lastError ?? "",
-          diff: await diff(workspace.worktreePath),
+          diff: await diff(workspace.worktreePath, workspace.baseRef),
         }),
         tools: ["read", "grep", "find", "ls", "edit", "write"],
         systemAppend: `${SAFETY_PROMPT}${CODING_STANDARDS}\
@@ -218,9 +244,11 @@ Implement the approved plan. You cannot use arbitrary shell commands; the orches
     const checksPassed = checkResults.length > 0 && checkResults.every((result) => result.exitCode === 0);
     state = await store.save({ ...state, phase: checksPassed ? "checked" : "needs-repair", lastError: checksPassed ? undefined : checkText });
 
-    const currentDiff = await diff(workspace.worktreePath);
+    const currentDiff = await diff(workspace.worktreePath, workspace.baseRef);
     const currentStatus = await status(workspace.worktreePath);
-    if (!currentStatus.trim()) throw new Error("Executor produced no repository changes");
+    if (!(await hasRepositoryChanges(workspace.worktreePath, workspace.baseRef))) {
+      throw new Error("Executor produced no repository changes");
+    }
 
     const usageBeforeReview = await getOpenRouterUsage();
     assertBudgetAvailable(usageBeforeReview, config.budget, 1);

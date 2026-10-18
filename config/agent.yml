@@ -6,6 +6,7 @@ github:
   repositories:
     - pizza-to-the-polls/pizzabase
     - pizza-to-the-polls/polls.pizza
+    - pizza-to-the-polls/feedflag
     - pizza-to-the-polls/democracy-delicious-agent
 
 paths:
@@ -25,6 +26,11 @@ models:
     thinking: high
 
 repositories:
+  pizza-to-the-polls/feedflag:
+    nodeVersion: "22"
+    checks:
+      full:
+        - npx tsc --noEmit
   pizza-to-the-polls/pizzabase:
     nodeVersion: "22"
     testDatabasePrefix: pizzabase_agent

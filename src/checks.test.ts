@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -58,8 +58,20 @@ test("selectCommands falls back to full checks when targeted is unset", () => {
 //
 // runChecks shells out through nvm (see the wrapper in checks.ts), so these
 // integration tests only run where nvm is installed (the operator machine).
-
-const nvmAvailable = existsSync(join(homedir(), ".nvm", "nvm.sh"));
+// NOTE: "installed" means nvm manages the required node version — CI runners
+// ship nvm.sh but no nvm-installed v22 (setup-node installs outside nvm),
+// so `nvm use 22` fails there and the tests must skip.
+const nvmAvailable =
+  existsSync(join(homedir(), ".nvm", "nvm.sh")) &&
+  (() => {
+    try {
+      return readdirSync(join(homedir(), ".nvm", "versions", "node")).some((d) =>
+        /^v22\./.test(d),
+      );
+    } catch {
+      return false;
+    }
+  })();
 
 async function initRepo(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "dd-checks-test-"));

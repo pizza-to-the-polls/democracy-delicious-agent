@@ -13,7 +13,22 @@ export interface WorkspaceInfo {
   baseBranch: string;
   /** The ref the branch was actually cut from (`origin/<baseBranch>` or `origin/master`). */
   baseRef: string;
+  /**
+   * Branch name the PR should target: the integration branch when it exists
+   * on the remote, otherwise the fallback the worktree was actually cut from
+   * (`master`). PRs cannot target branches that don't exist on the remote —
+   * GitHub rejects them with 422 `base: invalid` — and `baseBranch` may be
+   * a locally auto-generated `feature/<issue>-<slug>` name that was never
+   * pushed. (Regression since 7ef466d: standalone issues dispatched without
+   * `--integration-branch` 422'd at PR creation and fell back to manual
+   * recovery.)
+   */
+  prBaseBranch: string;
 }
+
+/** Strip the `origin/` prefix from a base ref for PR creation. */
+export const prBaseBranchForRef = (baseRef: string): string =>
+  baseRef.replace(/^origin\//, "");
 
 function slugify(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48);
@@ -90,6 +105,6 @@ export class WorkspaceManager {
       }
     }
 
-    return { repository, repositoryPath, worktreePath, branch, baseBranch, baseRef };
+    return { repository, repositoryPath, worktreePath, branch, baseBranch, baseRef, prBaseBranch: prBaseBranchForRef(baseRef) };
   }
 }

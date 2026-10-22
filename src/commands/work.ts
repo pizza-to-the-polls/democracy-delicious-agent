@@ -161,6 +161,7 @@ export async function runWork(config: AgentConfig, options: {
     console.log(`Worktree: ${workspace.worktreePath}`);
     console.log(`Branch: ${workspace.branch}`);
     console.log(`Integration branch: ${integrationBranch}`);
+    console.log(`PR base branch: ${workspace.prBaseBranch}`);
 
     let plan = options.resume && state.plan ? state.plan : undefined;
     if (!plan) {
@@ -295,7 +296,11 @@ This is an independent read-only review. Be skeptical and concise. Check that: t
           : `Closes #${issue.number}.`;
         const prUrl = await client.createPullRequest(options.repository, {
           head: workspace.branch,
-          base: integrationBranch,
+          // PR base must be a real remote branch: the integration branch when
+          // it exists there, else the branch the worktree was actually cut
+          // from (`master`). Targeting the auto-generated integration name
+          // 422s (base: invalid) — see WorkspaceInfo.prBaseBranch.
+          base: workspace.prBaseBranch,
           title: `fix: ${issue.title} (#${issue.number})`,
           body: `${closesLine}\n\n## Review\n\n${(state.review ?? "").split("\n").slice(0, 12).join("\n")}\n\n## Checks\n\n${checkText}`,
         });

@@ -1,0 +1,102 @@
+/**
+ * Tests for PR base-branch resolution in WorkspaceManager.prepare.
+ *
+ * Regression for the standalone-issue PR failure: prepare() auto-generates
+ * `feature/<issue>-<slug>` when no integration branch is configured, and
+ * the worktree correctly falls back to `origin/master` when that branch
+ * doesn't exist on the remote — but the PR must also target a real remote
+ * branch. Targeting the never-pushed auto-generated name 422s at PR
+ * creation (`base: invalid`), which is how #308/#310 and #312 ended up as
+ * manual PR recoveries.
+ *
+ * These use real temp git repositories — no mocks — matching the
+ * work.test.ts philosophy: the bugs being guarded are wrong assumptions
+ * about git state.
+ */
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { assertSuccess, runProcess } from "./process.js";
+import { WorkspaceManager, prBaseBranchForRef } from "./workspace.js";
+import type { AgentConfig } from "./config.js";
+import type { GitHubAppAuth } from "./github/auth.js";
+
+const dummyAuth = {
+  getInstallationToken: async () => ({ token: "dummy-token" }),
+} as unknown as GitHubAppAuth;
+
+const git = async (...args: string[]) =>
+  assertSuccess(await runProcess("git", args));
+
+async function initFixture(): Promise<{ root: string; cleanup: () => Promise<void> }> {
+  const root = await mkdtemp(join(tmpdir(), "dd-workspace-test-"));
+  const bare = join(root, "origin.git");
+  const seed = join(root, "seed");
+
+  // Bare "origin" with a master commit.
+  await git("init", "--bare", "-q", "-b", "master", bare);
+  await git("clone", "-q", bare, seed);
+  await git("-C", seed, "commit", "-q", "--allow-empty", "-m", "initial");
+  await git("-C", seed, "push", "-q", "origin", "master");
+
+  // Pre-seed the workspace's repository clone so prepare() skips its
+  // github.com network fallback (rev-parse succeeds → fetch local origin).
+  await git("clone", "-q", bare, join(root, "repositories", "repo"));
+
+  return { root, cleanup: () => rm(root, { recursive: true, force: true }) };
+}
+
+test("prBaseBranchForRef strips the origin/ prefix", () => {
+  assert.equal(prBaseBranchForRef("origin/master"), "master");
+  assert.equal(
+    prBaseBranchForRef("origin/feature/feed-observations"),
+    "feature/feed-observations",
+  );
+});
+
+test("prepare() targets master when the auto-generated integration branch is not on the remote", async () => {
+  const fx = await initFixture();
+  try {
+    const manager = new WorkspaceManager(
+      { paths: { workspace: fx.root } } as unknown as AgentConfig,
+      dummyAuth,
+    );
+    const info = await manager.prepare("test/repo", 312, "Some Bug Title");
+    assert.equal(info.baseBranch, "feature/312-some-bug-title");
+    assert.equal(info.baseRef, "origin/master");
+    assert.equal(info.prBaseBranch, "master");
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test("prepare() targets an explicit integration branch that exists on the remote", async () => {
+  const fx = await initFixture();
+  try {
+    // Create feature/x in the bare origin and fetch it into the clone so
+    // refs/remotes/origin/feature/x exists.
+    await git("-C", join(fx.root, "origin.git"), "branch", "feature/x", "master");
+    await git(
+      "-C",
+      join(fx.root, "repositories", "repo"),
+      "fetch",
+      "-q",
+      "--prune",
+      "origin",
+    );
+
+    const manager = new WorkspaceManager(
+      { paths: { workspace: fx.root } } as unknown as AgentConfig,
+      dummyAuth,
+    );
+    const info = await manager.prepare("test/repo", 313, "Some Bug Title", [], "feature/x");
+    assert.equal(info.baseBranch, "feature/x");
+    assert.equal(info.baseRef, "origin/feature/x");
+    assert.equal(info.prBaseBranch, "feature/x");
+  } finally {
+    await fx.cleanup();
+  }
+});

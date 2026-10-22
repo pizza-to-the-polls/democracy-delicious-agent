@@ -39,7 +39,21 @@ async function initFixture(): Promise<{ root: string; cleanup: () => Promise<voi
   // Bare "origin" with a master commit.
   await git("init", "--bare", "-q", "-b", "master", bare);
   await git("clone", "-q", bare, seed);
-  await git("-C", seed, "commit", "-q", "--allow-empty", "-m", "initial");
+  // Identity flags — CI runners have no global git config and
+  // commit would otherwise fail with "Author identity unknown".
+  await git(
+    "-C",
+    seed,
+    "-c",
+    "user.email=test@example.com",
+    "-c",
+    "user.name=Test",
+    "commit",
+    "-q",
+    "--allow-empty",
+    "-m",
+    "initial",
+  );
   await git("-C", seed, "push", "-q", "origin", "master");
 
   // Pre-seed the workspace's repository clone so prepare() skips its

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 
 export interface ProcessResult {
   command: string;
@@ -56,7 +57,12 @@ export async function runProcess(command: string, args: string[], options: RunPr
 }
 
 export async function runShell(command: string, options: RunProcessOptions = {}): Promise<ProcessResult> {
-  return runProcess("/bin/zsh", ["-lc", command], options);
+  // Prefer zsh (the operator machine), but fall back to bash — the ubuntu
+  // CI runner has no /bin/zsh and `spawn /bin/zsh ENOENT` broke every
+  // runShell consumer there (checks fix/full steps, integration tests).
+  // `-lc` is login-shell + command in both.
+  const shell = existsSync("/bin/zsh") ? "/bin/zsh" : "/bin/bash";
+  return runProcess(shell, ["-lc", command], options);
 }
 
 export function assertSuccess(result: ProcessResult): void {

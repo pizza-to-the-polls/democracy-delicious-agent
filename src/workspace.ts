@@ -30,6 +30,17 @@ export interface WorkspaceInfo {
 export const prBaseBranchForRef = (baseRef: string): string =>
   baseRef.replace(/^origin\//, "");
 
+/**
+ * Git identity for everything authored inside agent worktrees. The email is
+ * the GitHub App bot's noreply address (same identity GitHub stamps on
+ * app-token API merges), so code commits match the PR/merge authorship
+ * instead of the machine's global git config. Applies to commits made by the
+ * orchestrator, executor sessions, and human operators doing manual recovery
+ * in a retained worktree.
+ */
+export const AGENT_GIT_NAME = "democracy-delicious-agent[bot]";
+export const AGENT_GIT_EMAIL = "313051742+democracy-delicious-agent[bot]@users.noreply.github.com";
+
 function slugify(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48);
 }
@@ -104,6 +115,13 @@ export class WorkspaceManager {
         await appendFile(excludePath, `${currentExcludes.endsWith("\n") ? "" : "\n"}.agent-inputs/\n`);
       }
     }
+
+    // Pin the worktree clone's commit identity to the agent bot. `git config`
+    // in a linked worktree writes the clone's shared config, so this covers
+    // every worktree of this clone — including previously created ones that
+    // a `--resume` or manual recovery will commit in later.
+    assertSuccess(await runProcess("git", ["-C", worktreePath, "config", "user.name", AGENT_GIT_NAME], { env }));
+    assertSuccess(await runProcess("git", ["-C", worktreePath, "config", "user.email", AGENT_GIT_EMAIL], { env }));
 
     return { repository, repositoryPath, worktreePath, branch, baseBranch, baseRef, prBaseBranch: prBaseBranchForRef(baseRef) };
   }

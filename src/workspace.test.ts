@@ -20,7 +20,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertSuccess, runProcess } from "./process.js";
-import { WorkspaceManager, prBaseBranchForRef } from "./workspace.js";
+import { WorkspaceManager, prBaseBranchForRef, AGENT_GIT_NAME, AGENT_GIT_EMAIL } from "./workspace.js";
 import type { AgentConfig } from "./config.js";
 import type { GitHubAppAuth } from "./github/auth.js";
 
@@ -82,6 +82,15 @@ test("prepare() targets master when the auto-generated integration branch is not
     assert.equal(info.baseBranch, "feature/312-some-bug-title");
     assert.equal(info.baseRef, "origin/master");
     assert.equal(info.prBaseBranch, "master");
+    // Worktree commits must be attributed to the agent bot, not the machine's
+    // global git config (regression: agent/recovery commits landed as the
+    // human operator, e.g. 4ccf5d9 on PR #143).
+    const gitName = await runProcess("git", ["-C", info.worktreePath, "config", "user.name"]);
+    assert.equal(gitName.exitCode, 0);
+    assert.equal(gitName.stdout.trim(), AGENT_GIT_NAME);
+    const gitEmail = await runProcess("git", ["-C", info.worktreePath, "config", "user.email"]);
+    assert.equal(gitEmail.exitCode, 0);
+    assert.equal(gitEmail.stdout.trim(), AGENT_GIT_EMAIL);
   } finally {
     await fx.cleanup();
   }

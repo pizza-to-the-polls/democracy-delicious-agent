@@ -11,6 +11,7 @@ import { runStatus } from "./commands/status.js";
 import { runDaemon } from "./commands/daemon.js";
 import { postBootstrapInstructions } from "./commands/post-instructions.js";
 import { runWork } from "./commands/work.js";
+import { runToken } from "./commands/token.js";
 
 const program = new Command();
 program
@@ -119,6 +120,15 @@ program
   .action(async () => {
     const config = await loadConfig(program.opts<{ config?: string }>().config);
     await postBootstrapInstructions(config);
+  });
+
+program
+  .command("token")
+  .description("mint a ~1h GitHub App installation token so manual recovery PRs/commits are authored by the agent bot (use as GH_TOKEN)")
+  .option("--json", "print token, expiry, and permissions as JSON", false)
+  .action(async (options: { json: boolean }) => {
+    const config = await loadConfig(program.opts<{ config?: string }>().config);
+    process.exitCode = await runToken(config, { json: options.json });
   });
 
 // Default: daemon loop — respond → review → discover.

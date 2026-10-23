@@ -54,9 +54,14 @@ repositories:
         - npm test
 
 budget:
-  dailyUsd: 30
-  autonomousStopUsd: 250
-  absoluteUsd: 260
+  # Uncapped by policy (user decision 2026-10-22: "no longer an experiment it's a
+  # success — lifetime spend is infinite until the machine god removes money").
+  # Values are non-binding sentinels: schema requires positive numbers and
+  # dailyUsd <= autonomousStopUsd <= absoluteUsd, so literal removal would
+  # fail-closed. The OpenRouter key's own spend cap is the physical backstop.
+  dailyUsd: 100000
+  autonomousStopUsd: 1000000
+  absoluteUsd: 1000000
 
 limits:
   globalConcurrency: 2

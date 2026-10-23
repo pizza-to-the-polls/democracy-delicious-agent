@@ -7,6 +7,8 @@ github:
     - pizza-to-the-polls/pizzabase
     - pizza-to-the-polls/polls.pizza
     - pizza-to-the-polls/feedflag
+    - pizza-to-the-polls/hotnready
+    - pizza-to-the-polls/pizza-eagle
     - pizza-to-the-polls/democracy-delicious-agent
 
 paths:

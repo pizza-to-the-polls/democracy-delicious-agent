@@ -91,7 +91,12 @@ export async function runReview(config: AgentConfig, options: {
       if (labels.includes("agent:reviewed")) continue;
 
       // Check CI status.
-      const ci = await client.getPullRequestChecks(repo, pr.number);
+      // NOTE: the REST check-runs API returns lowercase conclusions
+      // ("success", "skipped", ...) — normalize before comparing.
+      const ci = (await client.getPullRequestChecks(repo, pr.number)).map((c) => ({
+        ...c,
+        conclusion: c.conclusion?.toUpperCase() ?? null,
+      }));
       const ciPassed = ci.every(
         (c) => c.conclusion === "SUCCESS" || c.conclusion === "NEUTRAL" || c.conclusion === "SKIPPED"
       );

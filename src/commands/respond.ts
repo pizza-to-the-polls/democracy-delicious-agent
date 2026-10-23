@@ -100,7 +100,8 @@ export async function runRespond(config: AgentConfig, options: {
       if (hasFeedbackLabel && humanComments.length === 0) {
         try {
           const checks = await client.getPullRequestChecks(repo, pr.number);
-          ciFailed = checks.some((c) => c.conclusion === "FAILURE");
+          // REST conclusions are lowercase — normalize before comparing.
+          ciFailed = checks.some((c) => c.conclusion?.toUpperCase() === "FAILURE");
           console.log(`  PR #${pr.number}: CI ${ciFailed ? "FAILING" : "passing"} (${checks.map((c) => `${c.name}=${c.conclusion}`).join(", ")})`);
         } catch (err) {
           console.log(`  PR #${pr.number}: could not fetch CI checks: ${err instanceof Error ? err.message : String(err)}`);

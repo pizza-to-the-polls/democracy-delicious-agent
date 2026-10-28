@@ -20,7 +20,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertSuccess, runProcess } from "./process.js";
-import { WorkspaceManager, prBaseBranchForRef, AGENT_GIT_NAME, AGENT_GIT_EMAIL } from "./workspace.js";
+import {
+  WorkspaceManager,
+  prBaseBranchForRef,
+  AGENT_GIT_NAME,
+  AGENT_GIT_EMAIL,
+} from "./workspace.js";
 import type { AgentConfig } from "./config.js";
 import type { GitHubAppAuth } from "./github/auth.js";
 
@@ -31,7 +36,9 @@ const dummyAuth = {
 const git = async (...args: string[]) =>
   assertSuccess(await runProcess("git", args));
 
-async function initFixture(defaultBranch = "master"): Promise<{ root: string; cleanup: () => Promise<void> }> {
+async function initFixture(
+  defaultBranch = "master",
+): Promise<{ root: string; cleanup: () => Promise<void> }> {
   const root = await mkdtemp(join(tmpdir(), "dd-workspace-test-"));
   const bare = join(root, "origin.git");
   const seed = join(root, "seed");
@@ -85,10 +92,20 @@ test("prepare() targets master when the auto-generated integration branch is not
     // Worktree commits must be attributed to the agent bot, not the machine's
     // global git config (regression: agent/recovery commits landed as the
     // human operator, e.g. 4ccf5d9 on PR #143).
-    const gitName = await runProcess("git", ["-C", info.worktreePath, "config", "user.name"]);
+    const gitName = await runProcess("git", [
+      "-C",
+      info.worktreePath,
+      "config",
+      "user.name",
+    ]);
     assert.equal(gitName.exitCode, 0);
     assert.equal(gitName.stdout.trim(), AGENT_GIT_NAME);
-    const gitEmail = await runProcess("git", ["-C", info.worktreePath, "config", "user.email"]);
+    const gitEmail = await runProcess("git", [
+      "-C",
+      info.worktreePath,
+      "config",
+      "user.email",
+    ]);
     assert.equal(gitEmail.exitCode, 0);
     assert.equal(gitEmail.stdout.trim(), AGENT_GIT_EMAIL);
   } finally {
@@ -116,12 +133,61 @@ test("prepare() falls back to the repo's actual default branch when base isn't m
   }
 });
 
+test("prepare() serializes concurrent same-repo workers (shared-clone fetch/worktree race, 2026-10-28)", async () => {
+  const fx = await initFixture();
+  try {
+    const managerFor = () =>
+      new WorkspaceManager(
+        { paths: { workspace: fx.root } } as unknown as AgentConfig,
+        dummyAuth,
+      );
+
+    // Two managers (as two runWork calls in one daemon fan-out) preparing
+    // DIFFERENT issues of the SAME repo concurrently. Pre-fix this
+    // interleaved fetch/prune with worktree checkout on the shared clone and
+    // crashed with `fatal: unable to read tree (<sha>)` (three pizza-eagle
+    // workers at once, 2026-10-28). The module-level queue must serialize
+    // them and both must come back valid.
+    const [a, b] = await Promise.all([
+      managerFor().prepare("test/repo", 321, "First Issue Title"),
+      managerFor().prepare("test/repo", 322, "Second Issue Title"),
+    ]);
+    assert.equal(a.branch, "agent/321-first-issue-title");
+    assert.equal(b.branch, "agent/322-second-issue-title");
+    for (const n of [321, 322]) {
+      const top = await runProcess("git", [
+        "-C",
+        join(fx.root, "worktrees", "repo", `issue-${n}`),
+        "rev-parse",
+        "--show-toplevel",
+      ]);
+      assert.equal(
+        top.exitCode,
+        0,
+        `worktree for issue ${n} must be a valid checkout`,
+      );
+    }
+
+    // The queue drains — a later prepare is not blocked by a stale tail.
+    const c = await managerFor().prepare("test/repo", 323, "Third Issue Title");
+    assert.equal(c.branch, "agent/323-third-issue-title");
+  } finally {
+    await fx.cleanup();
+  }
+});
+
 test("prepare() targets an explicit integration branch that exists on the remote", async () => {
   const fx = await initFixture();
   try {
     // Create feature/x in the bare origin and fetch it into the clone so
     // refs/remotes/origin/feature/x exists.
-    await git("-C", join(fx.root, "origin.git"), "branch", "feature/x", "master");
+    await git(
+      "-C",
+      join(fx.root, "origin.git"),
+      "branch",
+      "feature/x",
+      "master",
+    );
     await git(
       "-C",
       join(fx.root, "repositories", "repo"),
@@ -135,7 +201,13 @@ test("prepare() targets an explicit integration branch that exists on the remote
       { paths: { workspace: fx.root } } as unknown as AgentConfig,
       dummyAuth,
     );
-    const info = await manager.prepare("test/repo", 313, "Some Bug Title", [], "feature/x");
+    const info = await manager.prepare(
+      "test/repo",
+      313,
+      "Some Bug Title",
+      [],
+      "feature/x",
+    );
     assert.equal(info.baseBranch, "feature/x");
     assert.equal(info.baseRef, "origin/feature/x");
     assert.equal(info.prBaseBranch, "feature/x");

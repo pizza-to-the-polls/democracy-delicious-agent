@@ -70,6 +70,16 @@ repositories:
       full:
         - npm run check
         - npm test
+  pizza-to-the-polls/zapier:
+    nodeVersion: "24"
+    checks:
+      # Tier-0 offline gates (no Zapier MCP needed): unit tests + tsc.
+      # Integration validation (validate --unsafe, golden harvest) is
+      # operator/orchestrator-side — it needs ZAPIER_MCP_URL in the
+      # dispatching environment, which the env sanitizer passes through.
+      full:
+        - npm test
+        - npm run check
         - npm run build
 
 budget:

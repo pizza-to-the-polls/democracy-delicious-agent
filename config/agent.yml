@@ -70,6 +70,7 @@ repositories:
       full:
         - npm run check
         - npm test
+        - npm run build
   pizza-to-the-polls/zapier:
     nodeVersion: "24"
     checks:
@@ -80,7 +81,6 @@ repositories:
       full:
         - npm test
         - npm run check
-        - npm run build
 
 budget:
   # Uncapped by policy (user decision 2026-10-22: "no longer an experiment it's a

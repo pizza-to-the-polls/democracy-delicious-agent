@@ -21,6 +21,26 @@ export interface SessionResult {
 
 export type SessionRole = "planner" | "executor" | "reviewer";
 
+const TRANSIENT_MODEL_ERROR =
+  /terminated|timed out|timeout|\b(429|500|502|503|504)\b|overloaded|rate.?limit|provider returned error|connection error|fetch failed|socket hang up|ECONNRESET/i;
+
+/** Provider-side stalls and rate limits are worth retrying on a fallback model.
+ * Budget/credit errors are NOT transient — every fallback uses the same key, so
+ * they must surface loudly instead of burning attempts. */
+export function isTransientModelError(message: string | undefined): boolean {
+  if (!message) return false;
+  return TRANSIENT_MODEL_ERROR.test(message);
+}
+
+interface ModelRef {
+  id: string;
+  thinking: string;
+}
+
+function modelCandidates(role: AgentConfig["models"][SessionRole]): ModelRef[] {
+  return [role, ...(role.fallbacks ?? [])];
+}
+
 function assistantText(messages: readonly unknown[]): string {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index] as { role?: string; content?: Array<{ type?: string; text?: string; thinking?: string }> };
@@ -53,16 +73,46 @@ export async function runAgentSession(options: {
 }): Promise<SessionResult> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OPENROUTER_API_KEY is not configured");
-  const modelConfig = options.config.models[options.role];
+  const candidates = modelCandidates(options.config.models[options.role]);
+  const deadline = Date.now() + options.config.limits.issueWallClockMinutes * 60_000;
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt < candidates.length; attempt++) {
+    const candidate = candidates[attempt];
+    if (attempt > 0) {
+      console.warn(
+        `[dd-agent] ${options.role}: retrying on fallback model ${candidate.id} after: ${lastError?.message ?? "unknown error"}`,
+      );
+    }
+    const sessionName = attempt === 0 ? options.sessionName : `${options.sessionName}-fb${attempt}`;
+    try {
+      return await runAttempt(options, candidate, sessionName, deadline);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      // Wall-clock and budget/credit errors must surface, not loop through fallbacks.
+      if (/wall-clock limit/.test(lastError.message) || !isTransientModelError(lastError.message)) {
+        throw lastError;
+      }
+    }
+  }
+  throw lastError;
+}
+
+async function runAttempt(
+  options: Parameters<typeof runAgentSession>[0],
+  modelConfig: ModelRef,
+  sessionName: string,
+  deadline: number,
+): Promise<SessionResult> {
   const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false });
-  await modelRuntime.setRuntimeApiKey("openrouter", apiKey);
+  await modelRuntime.setRuntimeApiKey("openrouter", process.env.OPENROUTER_API_KEY!);
   const model = modelRuntime.getModel("openrouter", modelConfig.id);
   if (!model) throw new Error(`OpenRouter model not found: ${modelConfig.id}`);
 
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.inMemory({
     compaction: { enabled: true },
-    retry: { enabled: true, maxRetries: 2 },
+    retry: { enabled: true, maxRetries: 4 },
   });
   const loader = new DefaultResourceLoader({
     cwd: options.cwd,
@@ -80,7 +130,7 @@ export async function runAgentSession(options: {
   });
   await loader.reload();
 
-  const sessionDir = resolve(expandHome(options.config.paths.workspace), "sessions", options.sessionName);
+  const sessionDir = resolve(expandHome(options.config.paths.workspace), "sessions", sessionName);
   await mkdir(sessionDir, { recursive: true, mode: 0o700 });
   const sessionManager = SessionManager.create(options.cwd, sessionDir);
   const { session } = await createAgentSession({
@@ -104,12 +154,15 @@ export async function runAgentSession(options: {
     }
   });
   try {
-    const timeoutMs = options.config.limits.issueWallClockMinutes * 60_000;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new Error(`${options.role} exceeded ${options.config.limits.issueWallClockMinutes} minute wall-clock limit`);
+    }
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeout = setTimeout(() => {
         void session.abort();
         reject(new Error(`${options.role} exceeded ${options.config.limits.issueWallClockMinutes} minute wall-clock limit`));
-      }, timeoutMs);
+      }, remainingMs);
     });
     await Promise.race([session.prompt(options.prompt), timeoutPromise]);
     const stats = session.getSessionStats();

@@ -12,7 +12,49 @@ import { GitHubClient } from "../github/client.js";
 import { expandHome } from "../config.js";
 import { runAgentSession } from "../agent/run-session.js";
 import { getOpenRouterUsage, assertBudgetAvailable } from "../budget.js";
+import { notifyBudgetWarning } from "../notifications.js";
 import { logTimeline } from "../timeline.js";
+
+// ---------------------------------------------------------------------------
+// CI check classification + pending polling
+// ---------------------------------------------------------------------------
+
+export interface CheckRun {
+  name: string;
+  conclusion: string | null;
+  status: string;
+}
+
+/** Conclusions are normalized to uppercase by the caller.
+ * `passed`: every check concluded SUCCESS/NEUTRAL/SKIPPED (vacuously true when
+ * a PR has no checks). `pending`: at least one check has not concluded yet —
+ * NOT a failure; it means the run is still in progress. */
+export function classifyChecks(ci: CheckRun[]): { passed: boolean; pending: boolean } {
+  return {
+    passed: ci.every((c) => c.conclusion === "SUCCESS" || c.conclusion === "NEUTRAL" || c.conclusion === "SKIPPED"),
+    pending: ci.some((c) => c.conclusion === null),
+  };
+}
+
+const CI_POLL_INTERVAL_MS = 30_000;
+const CI_POLL_MAX_MS = 10 * 60_000;
+
+/** Wait for check-runs to conclude instead of misreading in-progress CI as a
+ * failure (which used to file spurious auto-fix issues). Bounded; the caller
+ * re-checks classification after. */
+async function awaitChecksConcluded(client: GitHubClient, repository: string, number: number): Promise<CheckRun[]> {
+  const startedAt = Date.now();
+  let ci = (await client.getPullRequestChecks(repository, number)).map(normalizeCheck);
+  while (ci.some((c) => c.conclusion === null) && Date.now() - startedAt < CI_POLL_MAX_MS) {
+    await new Promise((resolve) => setTimeout(resolve, CI_POLL_INTERVAL_MS));
+    ci = (await client.getPullRequestChecks(repository, number)).map(normalizeCheck);
+  }
+  return ci;
+}
+
+function normalizeCheck(c: { name: string; conclusion: string | null; status: string }): CheckRun {
+  return { ...c, conclusion: c.conclusion?.toUpperCase() ?? null };
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -66,6 +108,7 @@ export async function runReview(config: AgentConfig, options: {
   const usage = await getOpenRouterUsage();
   assertBudgetAvailable(usage, config.budget, 0.5);
   console.log(`OpenRouter: $${usage.usage.toFixed(2)} used, $${usage.remaining?.toFixed(2) ?? "?"} remaining`);
+  await notifyBudgetWarning(config, usage);
 
   const keyPath = expandHome(config.paths.githubPrivateKey);
   const auth = new GitHubAppAuth(config.github.appId, config.github.installationId, keyPath);
@@ -90,17 +133,17 @@ export async function runReview(config: AgentConfig, options: {
       const labels = details.labels.map((l: { name: string }) => l.name);
       if (labels.includes("agent:reviewed")) continue;
 
-      // Check CI status.
-      // NOTE: the REST check-runs API returns lowercase conclusions
-      // ("success", "skipped", ...) — normalize before comparing.
-      const ci = (await client.getPullRequestChecks(repo, pr.number)).map((c) => ({
-        ...c,
-        conclusion: c.conclusion?.toUpperCase() ?? null,
-      }));
-      const ciPassed = ci.every(
-        (c) => c.conclusion === "SUCCESS" || c.conclusion === "NEUTRAL" || c.conclusion === "SKIPPED"
-      );
-      console.log(`  PR #${pr.number}: CI ${ciPassed ? "pass" : "FAIL"} (${ci.map((c) => `${c.name}=${c.conclusion ?? "pending"}`).join(", ") || "no checks"})`);
+      // Check CI status. Pending runs are polled to conclusion (bounded) so
+      // in-progress CI is never misread as a failure.
+      const ci = await awaitChecksConcluded(client, repo, pr.number);
+      const { passed: ciPassed, pending: ciPending } = classifyChecks(ci);
+      console.log(`  PR #${pr.number}: CI ${ciPending ? "pending" : ciPassed ? "pass" : "FAIL"} (${ci.map((c) => `${c.name}=${c.conclusion ?? "pending"}`).join(", ") || "no checks"})`);
+
+      if (ciPending) {
+        console.log("  ⏭ Skipping — CI still pending after polling window; leaving for the next pass.");
+        await logTimeline(config, { ts: new Date().toISOString(), event: "review", pr: pr.number, status: "skip", detail: "CI pending" });
+        continue;
+      }
 
       // Check for human review comments.
       const comments = await client.listPullRequestComments(repo, pr.number);

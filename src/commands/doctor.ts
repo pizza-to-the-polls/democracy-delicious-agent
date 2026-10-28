@@ -80,11 +80,18 @@ export async function runDoctor(config: AgentConfig): Promise<number> {
       results.push({ name: "GitHub repository boundary", status: "pass", detail: actual.join(", ") });
     }
 
-    const dangerous = ["administration", "environments", "secrets", "workflows"].filter((permission) => permission in token.permissions);
+    // `workflows` removed from the never-allowed set (operator decision
+    // 2026-10-28): the agent needs it for CI/deploy work on org repos
+    // (feedflag deploy pipelines, CI role grants, etc.). Mitigation relied on:
+    // branch protection + required checks + human merge on the high-value
+    // repos; the executor's SAFETY_PROMPT forbids workflow edits; independent
+    // review gates every push. administration/environments/secrets remain
+    // never-allowed — a token with any of those is still a hard failure.
+    const dangerous = ["administration", "environments", "secrets"].filter((permission) => permission in token.permissions);
     results.push({
       name: "Critical GitHub permissions",
       status: dangerous.length ? "fail" : "pass",
-      detail: dangerous.length ? `unexpected permissions: ${dangerous.join(", ")}` : "no administration, environment, secrets, or workflow permission",
+      detail: dangerous.length ? `unexpected permissions: ${dangerous.join(", ")}` : "no administration, environment, or secrets permission (workflows allowed by policy, 2026-10-28)",
     });
 
     const extra = Object.keys(token.permissions).filter((permission) => ![

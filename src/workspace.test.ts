@@ -31,13 +31,13 @@ const dummyAuth = {
 const git = async (...args: string[]) =>
   assertSuccess(await runProcess("git", args));
 
-async function initFixture(): Promise<{ root: string; cleanup: () => Promise<void> }> {
+async function initFixture(defaultBranch = "master"): Promise<{ root: string; cleanup: () => Promise<void> }> {
   const root = await mkdtemp(join(tmpdir(), "dd-workspace-test-"));
   const bare = join(root, "origin.git");
   const seed = join(root, "seed");
 
-  // Bare "origin" with a master commit.
-  await git("init", "--bare", "-q", "-b", "master", bare);
+  // Bare "origin" with a commit on its default branch.
+  await git("init", "--bare", "-q", "-b", defaultBranch, bare);
   await git("clone", "-q", bare, seed);
   // Identity flags — CI runners have no global git config and
   // commit would otherwise fail with "Author identity unknown".
@@ -54,7 +54,7 @@ async function initFixture(): Promise<{ root: string; cleanup: () => Promise<voi
     "-m",
     "initial",
   );
-  await git("-C", seed, "push", "-q", "origin", "master");
+  await git("-C", seed, "push", "-q", "origin", defaultBranch);
 
   // Pre-seed the workspace's repository clone so prepare() skips its
   // github.com network fallback (rev-parse succeeds → fetch local origin).
@@ -91,6 +91,26 @@ test("prepare() targets master when the auto-generated integration branch is not
     const gitEmail = await runProcess("git", ["-C", info.worktreePath, "config", "user.email"]);
     assert.equal(gitEmail.exitCode, 0);
     assert.equal(gitEmail.stdout.trim(), AGENT_GIT_EMAIL);
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test("prepare() falls back to the repo's actual default branch when base isn't master (pizza-eagle regression, 2026-10-28)", async () => {
+  // pizza-eagle's default branch is main; the hardcoded origin/master
+  // fallback made worktree creation fail with `invalid reference`.
+  const fx = await initFixture("main");
+  try {
+    const manager = new WorkspaceManager(
+      { paths: { workspace: fx.root } } as unknown as AgentConfig,
+      dummyAuth,
+    );
+    // No --integration-branch: the auto-generated feature/314-… is not on
+    // the remote, so the fallback must resolve origin/HEAD → origin/main.
+    const info = await manager.prepare("test/repo", 314, "Some Bug Title");
+    assert.equal(info.baseBranch, "feature/314-some-bug-title");
+    assert.equal(info.baseRef, "origin/main");
+    assert.equal(info.prBaseBranch, "main");
   } finally {
     await fx.cleanup();
   }

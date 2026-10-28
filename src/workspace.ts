@@ -11,7 +11,9 @@ export interface WorkspaceInfo {
   worktreePath: string;
   branch: string;
   baseBranch: string;
-  /** The ref the branch was actually cut from (`origin/<baseBranch>` or `origin/master`). */
+  /** The ref the branch was actually cut from (`origin/<baseBranch>`, or the remote's
+   *  default branch via `origin/HEAD` when that branch doesn't exist; `origin/master`
+   *  only as a last resort). */
   baseRef: string;
   /**
    * Branch name the PR should target: the integration branch when it exists
@@ -27,6 +29,20 @@ export interface WorkspaceInfo {
 }
 
 /** Strip the `origin/` prefix from a base ref for PR creation. */
+/**
+ * Fallback when the configured/auto-generated base branch isn't on the remote:
+ * resolve the repo's actual default branch via `origin/HEAD` (set by clone)
+ * instead of assuming master. pizza-eagle is main-based and the hardcoded
+ * `origin/master` fallback failed worktree creation with
+ * `fatal: invalid reference: origin/master` (2026-10-28). The final fallback
+ * preserves the legacy master assumption when origin/HEAD can't be resolved.
+ */
+async function defaultRemoteBranch(repositoryPath: string, env: NodeJS.ProcessEnv): Promise<string> {
+  const head = await runProcess("git", ["-C", repositoryPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { env });
+  const ref = head.stdout.trim();
+  return head.exitCode === 0 && ref.startsWith("origin/") ? ref : "origin/master";
+}
+
 export const prBaseBranchForRef = (baseRef: string): string =>
   baseRef.replace(/^origin\//, "");
 
@@ -83,7 +99,7 @@ export class WorkspaceManager {
     }
 
     const remoteFeature = await runProcess("git", ["-C", repositoryPath, "show-ref", "--verify", `refs/remotes/origin/${baseBranch}`], { env });
-    const baseRef = remoteFeature.exitCode === 0 ? `origin/${baseBranch}` : "origin/master";
+    const baseRef = remoteFeature.exitCode === 0 ? `origin/${baseBranch}` : await defaultRemoteBranch(repositoryPath, env);
 
     const existingWorktree = await runProcess("git", ["-C", worktreePath, "rev-parse", "--show-toplevel"], { env });
     if (existingWorktree.exitCode !== 0) {

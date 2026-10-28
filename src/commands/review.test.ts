@@ -7,6 +7,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { classifyChecks } from "./review.js";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the review decision logic
@@ -73,20 +74,40 @@ describe("PR eligibility for review", () => {
 
   it("skips PRs with failing CI checks", () => {
     const checks = [
-      { name: "test", conclusion: "FAILURE" },
-      { name: "build", conclusion: "SUCCESS" },
+      { name: "test", conclusion: "FAILURE", status: "completed" },
+      { name: "build", conclusion: "SUCCESS", status: "completed" },
     ];
-    const allPass = checks.every((c) => c.conclusion === "SUCCESS" || c.conclusion === "NEUTRAL" || c.conclusion === "SKIPPED");
-    assert.strictEqual(allPass, false);
+    const { passed, pending } = classifyChecks(checks);
+    assert.strictEqual(passed, false);
+    assert.strictEqual(pending, false);
   });
 
   it("allows PRs with all passing CI checks", () => {
     const checks = [
-      { name: "test", conclusion: "SUCCESS" },
-      { name: "build", conclusion: "SUCCESS" },
+      { name: "test", conclusion: "SUCCESS", status: "completed" },
+      { name: "build", conclusion: "SUCCESS", status: "completed" },
     ];
-    const allPass = checks.every((c) => c.conclusion === "SUCCESS" || c.conclusion === "NEUTRAL" || c.conclusion === "SKIPPED");
-    assert.strictEqual(allPass, true);
+    const { passed, pending } = classifyChecks(checks);
+    assert.strictEqual(passed, true);
+    assert.strictEqual(pending, false);
+  });
+
+  it("treats in-progress (null-conclusion) checks as pending, not failed", () => {
+    const checks = [
+      { name: "test", conclusion: null, status: "in_progress" },
+      { name: "build", conclusion: "SUCCESS", status: "completed" },
+    ];
+    const { passed, pending } = classifyChecks(checks);
+    // Pending CI must not be classified as a failure — that used to file
+    // spurious auto-fix issues against PRs whose checks simply hadn't run yet.
+    assert.strictEqual(pending, true);
+    assert.strictEqual(passed, false);
+  });
+
+  it("classifies a PR with no checks as passed (vacuous) and not pending", () => {
+    const { passed, pending } = classifyChecks([]);
+    assert.strictEqual(passed, true);
+    assert.strictEqual(pending, false);
   });
 });
 

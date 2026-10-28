@@ -52,11 +52,24 @@ const config: AgentConfig = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-type MockIssue = { number: number; title: string; body: string | null; labels: string[] };
-type MockPR = { number: number; title: string; headRefName: string; baseRefName: string };
+type MockIssue = {
+  number: number;
+  title: string;
+  body: string | null;
+  labels: string[];
+};
+type MockPR = {
+  number: number;
+  title: string;
+  headRefName: string;
+  baseRefName: string;
+};
 
 /** Build a sequential mock function that returns successive values, falling back to the last value. */
-function sequentialFn<T>(values: T[], fallback: T): ReturnType<typeof mock.fn<() => Promise<T>>> {
+function sequentialFn<T>(
+  values: T[],
+  fallback: T,
+): ReturnType<typeof mock.fn<() => Promise<T>>> {
   let i = 0;
   return mock.fn(async () => {
     if (i < values.length) return values[i++]!;
@@ -75,7 +88,10 @@ function buildDeps(overrides: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mkClient = (): any => ({
     searchIssues: sequentialFn(overrides.searchIssues ?? [], [] as MockIssue[]),
-    listOpenPullRequests: sequentialFn(overrides.listOpenPRs ?? [], [] as MockPR[]),
+    listOpenPullRequests: sequentialFn(
+      overrides.listOpenPRs ?? [],
+      [] as MockPR[],
+    ),
   });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -95,13 +111,20 @@ function buildDeps(overrides: {
 /** First call args of a mock fn. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function firstCallArgs(fn: any): unknown[] {
-  return (fn.mock.calls[0] as { arguments: unknown[] } | undefined)?.arguments ?? [];
+  return (
+    (fn.mock.calls[0] as { arguments: unknown[] } | undefined)?.arguments ?? []
+  );
 }
 
 /** Options object passed as second argument to runWork. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function workOptions(fn: any) {
-  return firstCallArgs(fn)[1] as { repository: string; issueNumber: number; resume: boolean; integrationBranch?: string };
+  return firstCallArgs(fn)[1] as {
+    repository: string;
+    issueNumber: number;
+    resume: boolean;
+    integrationBranch?: string;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -112,7 +135,16 @@ describe("runAuto", () => {
   it("picks the first agent:ready issue with no open PR", async () => {
     const workFn = mock.fn(async () => 0);
     const deps = buildDeps({
-      searchIssues: [[{ number: 10, title: "Fix something", body: null, labels: ["agent:ready"] }]],
+      searchIssues: [
+        [
+          {
+            number: 10,
+            title: "Fix something",
+            body: null,
+            labels: ["agent:ready"],
+          },
+        ],
+      ],
       workFn,
     });
 
@@ -124,10 +156,26 @@ describe("runAuto", () => {
   it("skips issues that already have an open agent PR", async () => {
     const workFn = mock.fn(async () => 0);
     const deps = buildDeps({
-      searchIssues: [[{ number: 10, title: "Fix something", body: null, labels: ["agent:ready"] }]],
-      listOpenPRs: [[
-        { number: 1, title: "fix: Fix something (#10)", headRefName: "agent/10-fix-something", baseRefName: "master" },
-      ]],
+      searchIssues: [
+        [
+          {
+            number: 10,
+            title: "Fix something",
+            body: null,
+            labels: ["agent:ready"],
+          },
+        ],
+      ],
+      listOpenPRs: [
+        [
+          {
+            number: 1,
+            title: "fix: Fix something (#10)",
+            headRefName: "agent/10-fix-something",
+            baseRefName: "master",
+          },
+        ],
+      ],
       workFn,
     });
 
@@ -140,9 +188,16 @@ describe("runAuto", () => {
   it("reads integration branch from label", async () => {
     const workFn = mock.fn(async () => 0);
     const deps = buildDeps({
-      searchIssues: [[
-        { number: 10, title: "Add feature", body: null, labels: ["agent:ready", "branch:feature/test-branch"] },
-      ]],
+      searchIssues: [
+        [
+          {
+            number: 10,
+            title: "Add feature",
+            body: null,
+            labels: ["agent:ready", "branch:feature/test-branch"],
+          },
+        ],
+      ],
       workFn,
     });
 
@@ -157,23 +212,40 @@ describe("runAuto", () => {
   it("reads integration branch from issue body when no label", async () => {
     const workFn = mock.fn(async () => 0);
     const deps = buildDeps({
-      searchIssues: [[
-        { number: 10, title: "Add feature", body: "Some text\nIntegration branch: feature/my-branch\nMore text", labels: ["agent:ready"] },
-      ]],
+      searchIssues: [
+        [
+          {
+            number: 10,
+            title: "Add feature",
+            body: "Some text\nIntegration branch: feature/my-branch\nMore text",
+            labels: ["agent:ready"],
+          },
+        ],
+      ],
       workFn,
     });
 
     await runAuto(config, { dryRun: false }, deps);
 
-    assert.strictEqual(workOptions(workFn).integrationBranch, "feature/my-branch");
+    assert.strictEqual(
+      workOptions(workFn).integrationBranch,
+      "feature/my-branch",
+    );
   });
 
   it("defaults integration branch to undefined when on master", async () => {
     const workFn = mock.fn(async () => 0);
     const deps = buildDeps({
-      searchIssues: [[
-        { number: 10, title: "Add feature", body: "Just a body", labels: ["agent:ready"] },
-      ]],
+      searchIssues: [
+        [
+          {
+            number: 10,
+            title: "Add feature",
+            body: "Just a body",
+            labels: ["agent:ready"],
+          },
+        ],
+      ],
       workFn,
     });
 
@@ -187,7 +259,14 @@ describe("runAuto", () => {
     const deps = buildDeps({
       searchIssues: [
         [],
-        [{ number: 20, title: "Other repo issue", body: null, labels: ["agent:ready"] }],
+        [
+          {
+            number: 20,
+            title: "Other repo issue",
+            body: null,
+            labels: ["agent:ready"],
+          },
+        ],
       ],
       workFn,
     });
@@ -213,10 +292,24 @@ describe("runAuto", () => {
   it("auto-resumes when existing state is found", async () => {
     const workFn = mock.fn(async () => 0);
     const deps = buildDeps({
-      searchIssues: [[
-        { number: 10, title: "Fix something", body: null, labels: ["agent:ready", "branch:feature/x"] },
-      ]],
-      stateLoad: [{ repository: "test-org/test-repo", issueNumber: 10, phase: "needs-repair", costs: {} }],
+      searchIssues: [
+        [
+          {
+            number: 10,
+            title: "Fix something",
+            body: null,
+            labels: ["agent:ready", "branch:feature/x"],
+          },
+        ],
+      ],
+      stateLoad: [
+        {
+          repository: "test-org/test-repo",
+          issueNumber: 10,
+          phase: "needs-repair",
+          costs: {},
+        },
+      ],
       workFn,
     });
 
@@ -228,12 +321,29 @@ describe("runAuto", () => {
   it("skips issues with 'reviewed' state entirely", async () => {
     const workFn = mock.fn(async () => 0);
     const deps = buildDeps({
-      searchIssues: [[
-        { number: 10, title: "Fix something", body: null, labels: ["agent:ready", "branch:feature/x"] },
-        { number: 11, title: "Unreviewed issue", body: null, labels: ["agent:ready"] },
-      ]],
+      searchIssues: [
+        [
+          {
+            number: 10,
+            title: "Fix something",
+            body: null,
+            labels: ["agent:ready", "branch:feature/x"],
+          },
+          {
+            number: 11,
+            title: "Unreviewed issue",
+            body: null,
+            labels: ["agent:ready"],
+          },
+        ],
+      ],
       stateLoad: [
-        { repository: "test-org/test-repo", issueNumber: 10, phase: "reviewed", costs: {} },
+        {
+          repository: "test-org/test-repo",
+          issueNumber: 10,
+          phase: "reviewed",
+          costs: {},
+        },
         null,
       ],
       workFn,
@@ -252,8 +362,18 @@ describe("runAuto", () => {
     const deps = buildDeps({
       searchIssues: [
         [
-          { number: 10, title: "Locked issue", body: null, labels: ["agent:ready"] },
-          { number: 11, title: "Unlocked issue", body: null, labels: ["agent:ready"] },
+          {
+            number: 10,
+            title: "Locked issue",
+            body: null,
+            labels: ["agent:ready"],
+          },
+          {
+            number: 11,
+            title: "Unlocked issue",
+            body: null,
+            labels: ["agent:ready"],
+          },
         ],
       ],
       workFn,
@@ -275,9 +395,16 @@ describe("runAuto", () => {
   it("returns 0 when all candidates are locked", async () => {
     const workFn = mock.fn(async () => 0);
     const deps = buildDeps({
-      searchIssues: [[
-        { number: 10, title: "Locked issue", body: null, labels: ["agent:ready"] },
-      ]],
+      searchIssues: [
+        [
+          {
+            number: 10,
+            title: "Locked issue",
+            body: null,
+            labels: ["agent:ready"],
+          },
+        ],
+      ],
       workFn,
       tryLock: async () => false, // Everything is locked.
     });
@@ -286,5 +413,121 @@ describe("runAuto", () => {
 
     assert.strictEqual(exitCode, 0);
     assert.strictEqual(workFn.mock.calls.length, 0);
+  });
+
+  it("runs up to maxParallel issues concurrently", async () => {
+    let active = 0;
+    let peak = 0;
+    const workFn = mock.fn(async () => {
+      active++;
+      peak = Math.max(peak, active);
+      // Hold each worker open long enough to prove true overlap.
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      active--;
+      return 0;
+    });
+    const lockedIssues: number[] = [];
+    const unlockedIssues: number[] = [];
+    const deps = buildDeps({
+      searchIssues: [
+        [
+          { number: 10, title: "First", body: null, labels: ["agent:ready"] },
+          { number: 11, title: "Second", body: null, labels: ["agent:ready"] },
+          { number: 12, title: "Third", body: null, labels: ["agent:ready"] },
+        ],
+      ],
+      workFn,
+      tryLock: async (_repo, issue) => {
+        lockedIssues.push(issue);
+        return true;
+      },
+      unlock: async (_repo, issue) => {
+        unlockedIssues.push(issue);
+      },
+    });
+
+    const exitCode = await runAuto(
+      config,
+      { dryRun: false, maxParallel: 2 },
+      deps,
+    );
+
+    assert.strictEqual(exitCode, 0);
+    // Only the first two (oldest-first) candidates were launched — the
+    // third waits for a later iteration.
+    assert.strictEqual(workFn.mock.calls.length, 2);
+    assert.strictEqual(workOptions(workFn).issueNumber, 10);
+    assert.deepStrictEqual(lockedIssues, [10, 11]);
+    // Both locks are released when the pipelines finish.
+    assert.deepStrictEqual(unlockedIssues.sort(), [10, 11]);
+    // The two pipelines genuinely overlapped.
+    assert.strictEqual(peak, 2);
+  });
+
+  it("aggregates a failed concurrent worker into a nonzero exit code", async () => {
+    // #10's pipeline fails; #11 succeeds. Zero-arg mock keeps the helper's
+    // Mock type — the issue number is read from the recorded call args.
+    const workFn = mock.fn(async () => 1);
+    const deps = buildDeps({
+      searchIssues: [
+        [
+          { number: 10, title: "Failing", body: null, labels: ["agent:ready"] },
+          {
+            number: 11,
+            title: "Succeeding",
+            body: null,
+            labels: ["agent:ready"],
+          },
+        ],
+      ],
+      workFn,
+    });
+
+    const exitCode = await runAuto(
+      config,
+      { dryRun: false, maxParallel: 2 },
+      deps,
+    );
+
+    assert.strictEqual(exitCode, 1);
+    assert.strictEqual(workFn.mock.calls.length, 2);
+  });
+
+  it("releases the lock when skipping an already-reviewed issue", async () => {
+    const workFn = mock.fn(async () => 0);
+    const unlockedIssues: number[] = [];
+    const deps = buildDeps({
+      searchIssues: [
+        [
+          {
+            number: 10,
+            title: "Reviewed",
+            body: null,
+            labels: ["agent:ready"],
+          },
+          { number: 11, title: "Fresh", body: null, labels: ["agent:ready"] },
+        ],
+      ],
+      stateLoad: [
+        {
+          repository: "test-org/test-repo",
+          issueNumber: 10,
+          phase: "reviewed",
+          costs: {},
+        },
+        null,
+      ],
+      workFn,
+      unlock: async (_repo, issue) => {
+        unlockedIssues.push(issue);
+      },
+    });
+
+    await runAuto(config, { dryRun: false }, deps);
+
+    // #10's lock is released on the skip (no leak until process exit),
+    // then #11 is worked and released normally.
+    assert.deepStrictEqual(unlockedIssues, [10, 11]);
+    assert.strictEqual(workOptions(workFn).issueNumber, 11);
   });
 });

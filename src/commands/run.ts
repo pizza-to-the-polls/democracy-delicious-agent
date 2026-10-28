@@ -17,6 +17,13 @@ export interface RunAutoDeps {
   unlock?: (repo: string, issue: number) => Promise<void>;
 }
 
+export interface RunAutoOptions {
+  repo?: string;
+  dryRun: boolean;
+  /** Max issues to work concurrently (default 1 — the pre-parallel behavior). */
+  maxParallel?: number;
+}
+
 /**
  * Auto-discover the next agent:ready issue and work it.
  *
@@ -24,25 +31,36 @@ export interface RunAutoDeps {
  * already have an open agent PR, picks the oldest, determines the right
  * integration branch, acquires an exclusive lock, and delegates to the
  * standard `work` pipeline. If locking fails, the next candidate is tried.
+ *
+ * With `maxParallel > 1` the same selection runs for up to that many
+ * lockable candidates and their `work` pipelines run concurrently —
+ * per-issue locks still serialize any two workers on the same issue across
+ * daemons and manual `work` runs, and each issue gets its own worktree,
+ * branch, state file, and test database, so the only shared resources are
+ * the append-only timeline log and the (non-binding) global budget.
  */
 export async function runAuto(
   config: AgentConfig,
-  options: { repo?: string; dryRun: boolean },
-  deps: RunAutoDeps = {}
+  options: RunAutoOptions,
+  deps: RunAutoDeps = {},
 ): Promise<number> {
-  const client = deps.client ?? (() => {
-    const keyPath = expandHome(config.paths.githubPrivateKey);
-    const auth = new GitHubAppAuth(
-      config.github.appId,
-      config.github.installationId,
-      keyPath
-    );
-    return new GitHubClient(auth);
-  })();
+  const client =
+    deps.client ??
+    (() => {
+      const keyPath = expandHome(config.paths.githubPrivateKey);
+      const auth = new GitHubAppAuth(
+        config.github.appId,
+        config.github.installationId,
+        keyPath,
+      );
+      return new GitHubClient(auth);
+    })();
 
   const repos = options.repo
     ? [options.repo]
-    : config.github.repositories.filter((r) => r !== "pizza-to-the-polls/democracy-delicious-agent");
+    : config.github.repositories.filter(
+        (r) => r !== "pizza-to-the-polls/democracy-delicious-agent",
+      );
 
   // Collect all agent:ready issues across repos.
   const candidates: Array<{
@@ -69,9 +87,7 @@ export async function runAuto(
       }
 
       if (integrationBranch === "master" && issue.body) {
-        const match = issue.body.match(
-          /[Ii]ntegration\s*branch:\s*(\S+)/
-        );
+        const match = issue.body.match(/[Ii]ntegration\s*branch:\s*(\S+)/);
         if (match) integrationBranch = match[1];
       }
 
@@ -80,7 +96,7 @@ export async function runAuto(
         (pr) =>
           pr.headRefName.startsWith(`agent/${issue.number}-`) ||
           (pr.title.includes(`#${issue.number}`) &&
-            pr.title.includes(issue.title.slice(0, 20)))
+            pr.title.includes(issue.title.slice(0, 20))),
       );
       if (alreadyWorking) continue; // Skip — already being worked.
 
@@ -93,20 +109,28 @@ export async function runAuto(
     }
   }
 
-  // Try each candidate in order; skip any we can't lock.
+  const maxParallel = Math.max(1, options.maxParallel ?? 1);
+
+  // Try each candidate in order; skip any we can't lock, until maxParallel
+  // issues are locked and their pipelines launched.
+  const lockFn = deps.tryLock ?? defaultTryLock(config);
+  const unlockFn = deps.unlock ?? defaultUnlock(config);
+  const store = deps.store ?? new StateStore(config);
+  const workFn = deps.work ?? runWork;
+
+  const launched: Array<() => Promise<number>> = [];
   for (const candidate of candidates) {
+    if (launched.length >= maxParallel) break;
+
     if (options.dryRun) {
       console.log(
-        `Would work: ${candidate.repository}#${candidate.number} — ${candidate.title}`
+        `Would work: ${candidate.repository}#${candidate.number} — ${candidate.title}`,
       );
       console.log(`Integration branch: ${candidate.integrationBranch}`);
-      console.log("Dry run — stopping before agent execution.");
-      return 0;
+      continue;
     }
 
     // ---- Locking ----
-    const lockFn = deps.tryLock ?? defaultTryLock(config);
-    const unlockFn = deps.unlock ?? defaultUnlock(config);
     const locked = await lockFn(candidate.repository, candidate.number);
     if (!locked) {
       console.log(`Skipping #${candidate.number} — locked by another daemon.`);
@@ -114,26 +138,27 @@ export async function runAuto(
     }
 
     console.log(
-      `Auto-selected: ${candidate.repository}#${candidate.number} — ${candidate.title}`
+      `Auto-selected: ${candidate.repository}#${candidate.number} — ${candidate.title}`,
     );
     console.log(`Integration branch: ${candidate.integrationBranch}`);
 
     // Check for existing state — auto-resume if work was already started.
-    const store = deps.store ?? new StateStore(config);
     const state = await store.load(candidate.repository, candidate.number);
 
-    // Skip already-reviewed issues — they're done.
+    // Skip already-reviewed issues — they're done. Release the lock first:
+    // holding it past the skip leaks the lock until this process exits
+    // (the same-pid stale-lock reclaim can't take it back).
     if (state && state.phase === "reviewed") {
       console.log(`Skipping #${candidate.number} — already reviewed.`);
+      await unlockFn(candidate.repository, candidate.number).catch(() => {});
       continue;
     }
 
     const resume = !!(state && state.phase !== "created");
     if (resume) console.log(`Resuming (phase: ${state.phase})…`);
 
-    const workFn = deps.work ?? runWork;
-    try {
-      return await workFn(config, {
+    launched.push(() =>
+      workFn(config, {
         repository: candidate.repository,
         issueNumber: candidate.number,
         dryRun: false,
@@ -143,23 +168,51 @@ export async function runAuto(
           candidate.integrationBranch !== "master"
             ? candidate.integrationBranch
             : undefined,
-      });
-    } finally {
-      // Always release the lock when work finishes or fails.
-      await unlockFn(candidate.repository, candidate.number).catch(() => {});
-    }
+      }).finally(() => {
+        // Always release the lock when work finishes or fails.
+        unlockFn(candidate.repository, candidate.number).catch(() => {});
+      }),
+    );
   }
 
-  console.log("No agent:ready issues without active PRs that we can lock. Backlog is clear.");
-  return 0;
+  if (options.dryRun) {
+    if (candidates.length > 0) {
+      console.log("Dry run — stopping before agent execution.");
+    } else {
+      console.log(
+        "No agent:ready issues without active PRs that we can lock. Backlog is clear.",
+      );
+    }
+    return 0;
+  }
+
+  if (launched.length === 0) {
+    console.log(
+      "No agent:ready issues without active PRs that we can lock. Backlog is clear.",
+    );
+    return 0;
+  }
+
+  // Fan out: up to maxParallel work pipelines concurrently. Exit code is
+  // aggregated — any failed worker marks the phase failed for the timeline.
+  const results = await Promise.all(launched.map((start) => start()));
+  return results.every((code) => code === 0) ? 0 : 1;
 }
 
 // ---------------------------------------------------------------------------
 // Default file-based locking (single-machine, multi-process safe)
 // ---------------------------------------------------------------------------
 
-function lockPath(config: AgentConfig, repository: string, issueNumber: string | number): string {
-  return resolve(expandHome(config.paths.workspace), "locks", `${String(repository).replace("/", "--")}-${issueNumber}.lock`);
+function lockPath(
+  config: AgentConfig,
+  repository: string,
+  issueNumber: string | number,
+): string {
+  return resolve(
+    expandHome(config.paths.workspace),
+    "locks",
+    `${String(repository).replace("/", "--")}-${issueNumber}.lock`,
+  );
 }
 
 /** Best-effort liveness check: a dead holder's lock can be taken over. */
@@ -176,7 +229,10 @@ export function processAlive(pid: number): boolean {
 async function acquireLockFile(path: string): Promise<boolean> {
   try {
     // wx = exclusive write, fails with EEXIST if lock already held
-    await writeFile(path, `${process.pid}\n${new Date().toISOString()}`, { flag: "wx", mode: 0o600 });
+    await writeFile(path, `${process.pid}\n${new Date().toISOString()}`, {
+      flag: "wx",
+      mode: 0o600,
+    });
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;

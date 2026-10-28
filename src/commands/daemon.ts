@@ -57,33 +57,61 @@ async function runPhase(
 }
 
 /** Run a single respond → review → work iteration. Returns the exit code. */
-export async function runIteration(config: AgentConfig, iteration: number, dryRun: boolean): Promise<number> {
-  let exitCode = await runPhase(config, "respond", iteration, () => runRespond(config, { dryRun }));
+export async function runIteration(
+  config: AgentConfig,
+  iteration: number,
+  dryRun: boolean,
+): Promise<number> {
+  let exitCode = await runPhase(config, "respond", iteration, () =>
+    runRespond(config, { dryRun }),
+  );
 
   if (exitCode === 0) {
-    exitCode = await runPhase(config, "review", iteration, () => runReview(config, { dryRun }));
+    exitCode = await runPhase(config, "review", iteration, () =>
+      runReview(config, { dryRun }),
+    );
   }
 
   if (exitCode === 0) {
-    exitCode = await runPhase(config, "run", iteration, () => runAuto(config, { dryRun }));
+    exitCode = await runPhase(config, "run", iteration, () =>
+      runAuto(config, { dryRun, maxParallel: config.limits.globalConcurrency }),
+    );
   }
 
   return exitCode;
 }
 
-export async function runDaemon(config: AgentConfig, options: DaemonOptions): Promise<number> {
+export async function runDaemon(
+  config: AgentConfig,
+  options: DaemonOptions,
+): Promise<number> {
   let lastExitCode = 0;
   do {
     const iter = nextIteration();
     const startTime = Date.now();
-    console.log(`\n━━━ Iteration ${iter} started at ${new Date().toISOString()} ━━━`);
-    await logTimeline(config, { ts: new Date().toISOString(), event: "iteration_start", iteration: iter, status: "start" });
+    console.log(
+      `\n━━━ Iteration ${iter} started at ${new Date().toISOString()} ━━━`,
+    );
+    await logTimeline(config, {
+      ts: new Date().toISOString(),
+      event: "iteration_start",
+      iteration: iter,
+      status: "start",
+    });
 
     lastExitCode = await runIteration(config, iter, options.dryRun);
 
     const totalMs = Date.now() - startTime;
-    console.log(`━━━ Iteration ${iter} done (${totalMs}ms, exit ${lastExitCode}) ━━━\n`);
-    await logTimeline(config, { ts: new Date().toISOString(), event: "iteration_end", iteration: iter, status: lastExitCode === 0 ? "ok" : "fail", durationMs: totalMs });
+    console.log(
+      `━━━ Iteration ${iter} done (${totalMs}ms, exit ${lastExitCode}) ━━━\n`,
+    );
+    await logTimeline(config, {
+      ts: new Date().toISOString(),
+      event: "iteration_end",
+      iteration: iter,
+      status: lastExitCode === 0 ? "ok" : "fail",
+      durationMs: totalMs,
+    });
 
     if (!options.once) {
       await sleep(options.pollSeconds * 1000);

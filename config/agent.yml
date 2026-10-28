@@ -83,7 +83,12 @@ budget:
   absoluteUsd: 1000000
 
 limits:
-  globalConcurrency: 2
+  # Honored by runAuto/daemon since 2026-10-28 (was declared-not-enforced before):
+  # up to this many per-issue work pipelines run concurrently in the run
+  # phase (per-issue locks still serialize same-issue workers across
+  # daemons and manual `work` runs; each issue has its own worktree, branch,
+  # state file, and test database).
+  globalConcurrency: 3
   issueWallClockMinutes: 45
   maxModelTurns: 30
   maxTestRuns: 4

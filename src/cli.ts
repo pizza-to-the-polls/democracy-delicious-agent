@@ -24,17 +24,28 @@ function daemonOptions<T extends Command>(command: T): T {
   command
     .option("--once", "run a single iteration then exit", false)
     .option("--dry-run", "plan/review only, no mutations", false)
-    .option("--poll <seconds>", "seconds to sleep between iterations when looping", (v) => Number.parseInt(v, 10), 300);
+    .option(
+      "--poll <seconds>",
+      "seconds to sleep between iterations when looping",
+      (v) => Number.parseInt(v, 10),
+      300,
+    );
   return command;
 }
 
 daemonOptions(
   program
     .command("daemon")
-    .description("continuous loop: respond → review → discover + work (default command)"),
+    .description(
+      "continuous loop: respond → review → discover + work (default command)",
+    ),
 ).action(async (options: { once: boolean; dryRun: boolean; poll: number }) => {
   const config = await loadConfig(program.opts<{ config?: string }>().config);
-  process.exitCode = await runDaemon(config, { once: options.once, dryRun: options.dryRun, pollSeconds: options.poll });
+  process.exitCode = await runDaemon(config, {
+    once: options.once,
+    dryRun: options.dryRun,
+    pollSeconds: options.poll,
+  });
 });
 
 program
@@ -44,7 +55,10 @@ program
   .option("--dry-run", "show what would be done", false)
   .action(async (options: { repo?: string; dryRun: boolean }) => {
     const config = await loadConfig(program.opts<{ config?: string }>().config);
-    process.exitCode = await runRespond(config, { dryRun: options.dryRun, repo: options.repo });
+    process.exitCode = await runRespond(config, {
+      dryRun: options.dryRun,
+      repo: options.repo,
+    });
   });
 
 program
@@ -54,7 +68,10 @@ program
   .option("--dry-run", "review only, do not merge", false)
   .action(async (options: { repo?: string; dryRun: boolean }) => {
     const config = await loadConfig(program.opts<{ config?: string }>().config);
-    process.exitCode = await runReview(config, { dryRun: options.dryRun, repo: options.repo });
+    process.exitCode = await runReview(config, {
+      dryRun: options.dryRun,
+      repo: options.repo,
+    });
   });
 
 program
@@ -67,7 +84,9 @@ program
 
 program
   .command("status")
-  .description("show local agent state: locks, work state, worktrees, timeline, spend")
+  .description(
+    "show local agent state: locks, work state, worktrees, timeline, spend",
+  )
   .action(async () => {
     const config = await loadConfig(program.opts<{ config?: string }>().config);
     process.exitCode = await runStatus(config);
@@ -75,12 +94,21 @@ program
 
 program
   .command("clean")
-  .description("remove orphaned worktrees; with --all also state files, sessions, stale locks")
-  .option("--all", "remove all retained worktree/state/session data, not just orphans", false)
+  .description(
+    "remove orphaned worktrees; with --all also state files, sessions, stale locks",
+  )
+  .option(
+    "--all",
+    "remove all retained worktree/state/session data, not just orphans",
+    false,
+  )
   .option("--dry-run", "preview what would be removed", false)
   .action(async (options: { all: boolean; dryRun: boolean }) => {
     const config = await loadConfig(program.opts<{ config?: string }>().config);
-    process.exitCode = await runClean(config, { all: options.all, dryRun: options.dryRun });
+    process.exitCode = await runClean(config, {
+      all: options.all,
+      dryRun: options.dryRun,
+    });
   });
 
 program
@@ -90,29 +118,59 @@ program
   .option("--dry-run", "plan only", false)
   .action(async (options: { repo?: string; dryRun: boolean }) => {
     const config = await loadConfig(program.opts<{ config?: string }>().config);
-    process.exitCode = await runAuto(config, { repo: options.repo, dryRun: options.dryRun });
+    process.exitCode = await runAuto(config, {
+      repo: options.repo,
+      dryRun: options.dryRun,
+      maxParallel: config.limits.globalConcurrency,
+    });
   });
 
 program
   .command("work")
-  .description("plan or implement one approved GitHub issue in an isolated worktree")
+  .description(
+    "plan or implement one approved GitHub issue in an isolated worktree",
+  )
   .requiredOption("--repo <owner/name>", "approved GitHub repository")
-  .requiredOption("--issue <number>", "GitHub issue number", (value) => Number.parseInt(value, 10))
-  .option("--dry-run", "plan only; do not let the agent modify repository files", false)
+  .requiredOption("--issue <number>", "GitHub issue number", (value) =>
+    Number.parseInt(value, 10),
+  )
+  .option(
+    "--dry-run",
+    "plan only; do not let the agent modify repository files",
+    false,
+  )
   .option("--resume", "resume/reconcile existing local issue state", false)
-  .option("--integration-branch <name>", "feature branch to target (child PRs merge here; umbrella PR to master later)")
-  .option("--review-only", "run deterministic checks and independent review on the existing worktree", false)
-  .action(async (options: { repo: string; issue: number; dryRun: boolean; resume: boolean; reviewOnly: boolean; integrationBranch?: string }) => {
-    const config = await loadConfig(program.opts<{ config?: string }>().config);
-    process.exitCode = await runWork(config, {
-      repository: options.repo,
-      issueNumber: options.issue,
-      dryRun: options.dryRun,
-      resume: options.resume,
-      reviewOnly: options.reviewOnly,
-      integrationBranch: options.integrationBranch,
-    });
-  });
+  .option(
+    "--integration-branch <name>",
+    "feature branch to target (child PRs merge here; umbrella PR to master later)",
+  )
+  .option(
+    "--review-only",
+    "run deterministic checks and independent review on the existing worktree",
+    false,
+  )
+  .action(
+    async (options: {
+      repo: string;
+      issue: number;
+      dryRun: boolean;
+      resume: boolean;
+      reviewOnly: boolean;
+      integrationBranch?: string;
+    }) => {
+      const config = await loadConfig(
+        program.opts<{ config?: string }>().config,
+      );
+      process.exitCode = await runWork(config, {
+        repository: options.repo,
+        issueNumber: options.issue,
+        dryRun: options.dryRun,
+        resume: options.resume,
+        reviewOnly: options.reviewOnly,
+        integrationBranch: options.integrationBranch,
+      });
+    },
+  );
 
 program
   .command("post-instructions")
@@ -124,7 +182,9 @@ program
 
 program
   .command("token")
-  .description("mint a ~1h GitHub App installation token so manual recovery PRs/commits are authored by the agent bot (use as GH_TOKEN)")
+  .description(
+    "mint a ~1h GitHub App installation token so manual recovery PRs/commits are authored by the agent bot (use as GH_TOKEN)",
+  )
   .option("--json", "print token, expiry, and permissions as JSON", false)
   .action(async (options: { json: boolean }) => {
     const config = await loadConfig(program.opts<{ config?: string }>().config);
@@ -132,17 +192,24 @@ program
   });
 
 // Default: daemon loop — respond → review → discover.
-daemonOptions(program).action(async (options: { once: boolean; dryRun: boolean; poll: number }) => {
-  const config = await loadConfig(program.opts<{ config?: string }>().config);
-  process.exitCode = await runDaemon(config, { once: options.once, dryRun: options.dryRun, pollSeconds: options.poll });
-});
+daemonOptions(program).action(
+  async (options: { once: boolean; dryRun: boolean; poll: number }) => {
+    const config = await loadConfig(program.opts<{ config?: string }>().config);
+    process.exitCode = await runDaemon(config, {
+      once: options.once,
+      dryRun: options.dryRun,
+      pollSeconds: options.poll,
+    });
+  },
+);
 
 try {
   await program.parseAsync();
 } catch (error) {
   if (error instanceof ZodError) {
     console.error("Invalid configuration:");
-    for (const issue of error.issues) console.error(`- ${issue.path.join(".")}: ${issue.message}`);
+    for (const issue of error.issues)
+      console.error(`- ${issue.path.join(".")}: ${issue.message}`);
   } else {
     console.error(error instanceof Error ? error.message : String(error));
   }

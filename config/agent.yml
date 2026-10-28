@@ -3,6 +3,10 @@ github:
   appId: 4486291
   installationId: 151233951
   projectNumber: 1
+  # App boundary = the installation (operator decision 2026-10-28: expansive —
+  # keep the app installed org-wide; discovery loops see every repo below).
+  # Executing work still requires a per-repo `repositories:` entry with
+  # nodeVersion + checks — that's the second gate.
   repositories:
     - pizza-to-the-polls/pizzabase
     - pizza-to-the-polls/polls.pizza
@@ -10,6 +14,14 @@ github:
     - pizza-to-the-polls/hotnready
     - pizza-to-the-polls/pizza-eagle
     - pizza-to-the-polls/democracy-delicious-agent
+    - pizza-to-the-polls/data-maps
+    - pizza-to-the-polls/power-the-polls
+    - pizza-to-the-polls/power-the-polls-form
+    - pizza-to-the-polls/powerdash
+    - pizza-to-the-polls/powerthepolls
+    - pizza-to-the-polls/ptp-actionkit
+    - pizza-to-the-polls/ptp-retool-components
+    - pizza-to-the-polls/zapier
 
 paths:
   githubPrivateKey: ~/.config/democracy-delicious/github-app.pem

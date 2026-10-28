@@ -52,6 +52,13 @@ repositories:
         - npm run prettier
         - npm run lint
         - npm test
+  pizza-to-the-polls/pizza-eagle:
+    nodeVersion: "24"
+    checks:
+      full:
+        - npm run check
+        - npm test
+        - npm run build
 
 budget:
   # Uncapped by policy (user decision 2026-10-22: "no longer an experiment it's a

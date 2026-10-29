@@ -43,8 +43,16 @@ repositories:
   pizza-to-the-polls/feedflag:
     nodeVersion: "22"
     checks:
+      # Mirror .github/workflows/test.yml exactly (prettier -> lint -> tsc -> npm
+      # test). tsc-only let PR #36 reach CI unformatted and let issue #38's
+      # self-tests fail unseen: the reviewer ACCEPTed on a green tsc while
+      # `npm test` was red.
+      fix: npx --yes prettier --write "src/**/*.ts" "scripts/**/*.ts"
       full:
+        - npx --yes prettier --check "src/**/*.ts" "scripts/**/*.ts"
+        - npm run lint
         - npx tsc --noEmit
+        - npm test
   pizza-to-the-polls/pizzabase:
     nodeVersion: "22"
     testDatabasePrefix: pizzabase_agent

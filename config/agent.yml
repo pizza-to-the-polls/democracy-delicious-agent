@@ -29,15 +29,27 @@ paths:
   workspace: ~/PizzaAgent
 
 models:
+  # fallbacks: ordered retry models for transient provider errors (stalls,
+  # rate limits). Budget/credit errors never fall back — same key — and are
+  # surfaced via the budget warning instead.
   planner:
     id: deepseek/deepseek-v4-flash
     thinking: medium
+    fallbacks:
+      - id: z-ai/glm-5.3-flash
+        thinking: medium
   executor:
     id: z-ai/glm-5.3-flash
     thinking: medium
+    fallbacks:
+      - id: deepseek/deepseek-v4-flash
+        thinking: medium
   reviewer:
     id: google/gemini-2.5-flash-lite
     thinking: high
+    fallbacks:
+      - id: z-ai/glm-5.3-flash
+        thinking: high
 
 repositories:
   pizza-to-the-polls/feedflag:
@@ -91,6 +103,15 @@ budget:
   dailyUsd: 100000
   autonomousStopUsd: 1000000
   absoluteUsd: 1000000
+  # Early-warning threshold (advisory console + optional Slack post); the
+  # key's own spend cap remains the physical backstop.
+  warnRemainingUsd: 5
+
+# Optional outbound notifications. The env var NAME is configured here; the
+# webhook URL value lives only in the environment (unset = silent). Advisory
+# only — notification failures never fail a run.
+notifications:
+  webhookEnv: DD_AGENT_SLACK_WEBHOOK
 
 limits:
   # Honored by runAuto/daemon since 2026-10-28 (was declared-not-enforced before):

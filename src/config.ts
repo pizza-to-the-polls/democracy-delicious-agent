@@ -8,9 +8,15 @@ import dotenv from "dotenv";
 
 const thinkingLevelSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
-const modelRoleSchema = z.object({
+const modelRefSchema = z.object({
   id: z.string().min(1),
   thinking: thinkingLevelSchema,
+});
+
+const modelRoleSchema = modelRefSchema.extend({
+  // Ordered fallback models tried on transient provider errors (stalls,
+  // rate limits). Budget/credit errors never fall back — same key.
+  fallbacks: z.array(modelRefSchema).optional(),
 });
 
 export const repositoryConfigSchema = z.object({
@@ -46,7 +52,15 @@ const configSchema = z.object({
     dailyUsd: z.number().positive(),
     autonomousStopUsd: z.number().positive(),
     absoluteUsd: z.number().positive(),
+    warnRemainingUsd: z.number().positive().optional(),
   }),
+  notifications: z
+    .object({
+      // Name of the env var holding a Slack incoming-webhook URL. Optional:
+      // unset config/env = silent. The URL value itself never enters config.
+      webhookEnv: z.string().min(1),
+    })
+    .optional(),
   limits: z.object({
     globalConcurrency: z.number().int().positive(),
     issueWallClockMinutes: z.number().int().positive(),

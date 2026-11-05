@@ -30,6 +30,26 @@ export async function getOpenRouterUsage(): Promise<OpenRouterUsage> {
   };
 }
 
+/** Non-fatal early warning: approaching the gates assertBudgetAvailable throws at.
+ * Returns a human-readable warning, or null while comfortably inside limits. */
+export function budgetWarning(
+  usage: OpenRouterUsage,
+  limits: { dailyUsd: number; autonomousStopUsd: number },
+  warnRemainingUsd = 5,
+): string | null {
+  const warnings: string[] = [];
+  if (usage.usageDaily >= limits.dailyUsd * 0.8) {
+    warnings.push(`daily usage $${usage.usageDaily.toFixed(2)} is ≥80% of the $${limits.dailyUsd.toFixed(2)} daily limit`);
+  }
+  if (usage.usage >= limits.autonomousStopUsd * 0.9) {
+    warnings.push(`total usage $${usage.usage.toFixed(2)} is ≥90% of the $${limits.autonomousStopUsd.toFixed(2)} autonomous stop`);
+  }
+  if (usage.remaining !== null && usage.remaining < warnRemainingUsd) {
+    warnings.push(`only $${usage.remaining.toFixed(2)} left on the OpenRouter key (warn < $${warnRemainingUsd.toFixed(2)})`);
+  }
+  return warnings.length ? `OpenRouter budget warning: ${warnings.join("; ")}` : null;
+}
+
 export function assertBudgetAvailable(
   usage: OpenRouterUsage,
   limits: { dailyUsd: number; autonomousStopUsd: number; absoluteUsd: number },

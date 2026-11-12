@@ -7,7 +7,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { classifyChecks } from "./review.js";
+import { classifyChecks, resolveExplicitTarget, shouldAutoMerge } from "./review.js";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the review decision logic
@@ -169,5 +169,53 @@ describe("human feedback detection", () => {
     // A PR with human comments should NOT be auto-merged even if review passes.
     const canAutoMerge = pr.reviewAccepted && !pr.hasHumanComments;
     assert.strictEqual(canAutoMerge, false);
+  });
+});
+// ---------------------------------------------------------------------------
+// Explicit-PR mode (--pr N --repo owner/name)
+// ---------------------------------------------------------------------------
+
+describe("explicit PR mode (--pr)", () => {
+  const fleet = [
+    "pizza-to-the-polls/pizzabase",
+    "pizza-to-the-polls/pizza-eagle",
+    "pizza-to-the-polls/democracy-delicious-agent",
+  ];
+
+  it("requires a numeric PR number", () => {
+    const r = resolveExplicitTarget({ pr: Number.NaN, repo: "pizza-to-the-polls/pizzabase" }, fleet);
+    assert.ok(r.error);
+    assert.strictEqual(resolveExplicitTarget({ pr: 0, repo: "pizza-to-the-polls/pizzabase" }, fleet).error !== undefined, true);
+  });
+
+  it("requires --repo", () => {
+    const r = resolveExplicitTarget({ pr: 78 }, fleet);
+    assert.match(r.error ?? "", /requires --repo/);
+  });
+
+  it("rejects repos outside the configured fleet", () => {
+    const r = resolveExplicitTarget({ pr: 1, repo: "some-other-org/repo" }, fleet);
+    assert.match(r.error ?? "", /not in the agent's configured repositories/);
+    assert.strictEqual(r.repo, undefined);
+  });
+
+  it("accepts a configured repo — including dd-agent itself (self-review case)", () => {
+    assert.deepEqual(
+      resolveExplicitTarget({ pr: 19, repo: "pizza-to-the-polls/democracy-delicious-agent" }, fleet),
+      { repo: "pizza-to-the-polls/democracy-delicious-agent" },
+    );
+  });
+
+  it("NEVER auto-merges in explicit mode, even when accepted + CI green", () => {
+    assert.strictEqual(
+      shouldAutoMerge({ accepted: true, ciPassed: true, explicitPr: true }),
+      false,
+    );
+  });
+
+  it("auto-merges in integration mode only when accepted AND CI green", () => {
+    assert.strictEqual(shouldAutoMerge({ accepted: true, ciPassed: true, explicitPr: false }), true);
+    assert.strictEqual(shouldAutoMerge({ accepted: false, ciPassed: true, explicitPr: false }), false);
+    assert.strictEqual(shouldAutoMerge({ accepted: true, ciPassed: false, explicitPr: false }), false);
   });
 });

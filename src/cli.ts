@@ -63,14 +63,16 @@ program
 
 program
   .command("review")
-  .description("review open agent PRs on integration branches, merge if clean")
+  .description("review open agent PRs on integration branches, merge if clean; --pr N for one explicit PR (never auto-merges)")
   .option("--repo <owner/name>", "restrict to a single repository")
+  .option("--pr <number>", "review ONE explicit PR (requires --repo); accepted review only labels, never merges", (value: string) => Number.parseInt(value, 10))
   .option("--dry-run", "review only, do not merge", false)
-  .action(async (options: { repo?: string; dryRun: boolean }) => {
+  .action(async (options: { repo?: string; pr?: number; dryRun: boolean }) => {
     const config = await loadConfig(program.opts<{ config?: string }>().config);
     process.exitCode = await runReview(config, {
       dryRun: options.dryRun,
       repo: options.repo,
+      pr: options.pr,
     });
   });
 

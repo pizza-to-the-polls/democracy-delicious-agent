@@ -17,7 +17,7 @@ flowchart TD
     RESPOND_Q -->|no| REVIEW
     RESPOND_FIX --> REVIEW
 
-    REVIEW["🔍 review<br/>scan agent PRs targeting<br/>feature/* branches"] --> REVIEW_Q{"eligible PRs?"}
+    REVIEW["🔍 review<br/>scan agent PRs targeting<br/>feature/* branches<br/>(--pr N: one explicit PR,<br/>never auto-merges)"] --> REVIEW_Q{"eligible PRs?"}
     REVIEW_Q -->|CI failed| REVIEW_FEEDBACK["label agent:feedback<br/>skip"]
     REVIEW_Q -->|CI green| REVIEW_MODEL["reviewer model<br/>reviews diff"]
     REVIEW_FEEDBACK --> RUN
@@ -126,6 +126,11 @@ npm run agent -- run                   # discover + work next issue
 npm run agent -- run --dry-run         # discover only, no work
 npm run agent -- review                # review + merge open agent PRs
 npm run agent -- review --dry-run      # review only, no merge
+npm run agent -- review --pr 78 \
+  --repo pizza-to-the-polls/pizza-eagle
+# ^ ONE explicit PR, bypassing the agent/*→feature/* filter — for PRs that
+#   target a default branch directly. NEVER auto-merges: accepted review only
+#   labels agent:reviewed, keeping the human merge as the deploy gate.
 
 # Plan and implement a specific approved issue
 npm run agent -- work \

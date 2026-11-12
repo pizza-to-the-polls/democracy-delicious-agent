@@ -4,6 +4,11 @@
  * Finds open agent PRs targeting integration branches, runs independent
  * review via the reviewer model, posts findings as PR comments, and
  * merges when review passes and CI is green.
+ *
+ * Explicit-PR mode (`--pr N --repo owner/name`): review ONE PR by number,
+ * bypassing the agent/*→feature/* filter — for PRs that target a default
+ * branch directly (e.g. pizza-eagle, where merge-to-main IS the deploy
+ * gate). NEVER merges in this mode: the human merge stays the gate.
  */
 
 import type { AgentConfig } from "../config.js";
@@ -67,6 +72,7 @@ interface EligiblePR {
   headRefName: string;
   baseRefName: string;
   html_url: string;
+  body: string | null;
   ciPassed: boolean;
   hasHumanComments: boolean;
 }
@@ -85,17 +91,50 @@ function reviewAccepted(text: string): boolean {
   return /\bVERDICT:\s*ACCEPT\b/i.test(text) && !/\bVERDICT:\s*REJECT\b/i.test(text);
 }
 
+/** Explicit-PR mode NEVER merges — for default-branch-targeting PRs the
+ * human merge IS the deploy gate, so an accepted review only labels. */
+export function shouldAutoMerge(opts: { accepted: boolean; ciPassed: boolean; explicitPr: boolean }): boolean {
+  return opts.accepted && opts.ciPassed && !opts.explicitPr;
+}
+
+/** Validate --pr/--repo as an explicit review target. The repo must be in
+ * the agent's configured fleet — explicit mode broadens WHICH PR in a repo
+ * is reviewable, not which repos the agent may touch (democracy-delicious-agent
+ * itself is deliberately allowed here, unlike the auto loop: the self-review
+ * case is the point). Returns { repo } on success, { error } on failure. */
+export function resolveExplicitTarget(
+  options: { pr?: number; repo?: string },
+  configuredRepos: string[],
+): { repo?: string; error?: string } {
+  if (!Number.isInteger(options.pr) || (options.pr as number) <= 0) {
+    return { error: `--pr needs a PR number, got ${JSON.stringify(options.pr)}` };
+  }
+  if (!options.repo) {
+    return { error: "--pr requires --repo <owner/name> (explicit review is per-repo)" };
+  }
+  if (!configuredRepos.includes(options.repo)) {
+    return { error: `repo ${options.repo} is not in the agent's configured repositories` };
+  }
+  return { repo: options.repo };
+}
+
 const REVIEW_PROMPT = `You are an autonomous code reviewer. Review this pull request thoroughly. Be skeptical. After your analysis, end with exactly VERDICT: ACCEPT or VERDICT: REJECT.
 
 Check for:
-- Correctness: does the code implement what the issue describes?
+- Correctness: does the code implement what the PR/issue describes?
 - Test quality: are tests present, not skipped, and testing real behavior?
-- Architecture: are controllers thin? Is logic extracted into services with DI?
+- Architecture: are controllers thin? Is logic extracted into services with DI (where the repo uses that pattern)?
 - Type safety: are interfaces well-typed without being brittle?
 - Formatting: was the project's fix/lint command run?
-- Coding standards: no skipped tests on new features, clean interfaces, thin controllers.
+- Coding standards: no skipped tests on new features, clean interfaces.
 
 If you reject, list specific, actionable findings.`;
+
+/** Appended in explicit-PR mode: these PRs land on a default branch with no
+ * integration umbrella, so standalone-landing safety is the reviewer's job. */
+const EXPLICIT_PR_NOTE = `
+
+This PR targets a default branch directly (explicit review — no integration branch). Judge whether it is safe to land standalone; the human merge is the final gate.`;
 
 // ---------------------------------------------------------------------------
 // Main command
@@ -104,6 +143,8 @@ If you reject, list specific, actionable findings.`;
 export async function runReview(config: AgentConfig, options: {
   dryRun: boolean;
   repo?: string;
+  /** Review ONE explicit PR (--pr N --repo owner/name) — never merges. */
+  pr?: number;
 }): Promise<number> {
   const usage = await getOpenRouterUsage();
   assertBudgetAvailable(usage, config.budget, 0.5);
@@ -121,6 +162,47 @@ export async function runReview(config: AgentConfig, options: {
   // ---- 1. Find eligible PRs ------------------------------------------------
   const eligible: EligiblePR[] = [];
 
+  if (options.pr) {
+    // Explicit-PR mode: ONE PR by number, no branch-shape filter. Same
+    // protections still apply (already-reviewed skip, CI polling, human
+    // comment detection) — only the selection filter is bypassed.
+    const target = resolveExplicitTarget({ pr: options.pr, repo: options.repo }, config.github.repositories);
+    if (target.error) {
+      console.error(target.error);
+      return 1;
+    }
+    const repo = target.repo as string;
+    const details = await client.getPullRequest(repo, options.pr);
+    const labels = details.labels.map((l: { name: string }) => l.name);
+    if (labels.includes("agent:reviewed")) {
+      console.log(`PR #${options.pr} already carries agent:reviewed — nothing to do.`);
+      return 0;
+    }
+    const ci = await awaitChecksConcluded(client, repo, options.pr);
+    const { passed: ciPassed, pending: ciPending } = classifyChecks(ci);
+    if (ciPending) {
+      console.log(`PR #${options.pr}: CI still pending after polling window — re-run later.`);
+      await logTimeline(config, { ts: new Date().toISOString(), event: "review", pr: options.pr, status: "skip", detail: "CI pending (explicit PR)" });
+      return 0;
+    }
+    const comments = await client.listPullRequestComments(repo, options.pr);
+    eligible.push({
+      repository: repo,
+      number: options.pr,
+      title: details.title,
+      headRefName: details.headRefName,
+      baseRefName: details.baseRefName,
+      html_url: details.html_url,
+      body: details.body,
+      ciPassed,
+      hasHumanComments: comments.some(
+        (c) =>
+          !c.user.login.includes("bot") &&
+          !c.user.login.includes("agent") &&
+          !c.user.login.includes("[bot]"),
+      ),
+    });
+  } else {
   for (const repo of repos) {
     const prs = await client.listOpenPullRequests(repo);
     for (const pr of prs) {
@@ -161,11 +243,13 @@ export async function runReview(config: AgentConfig, options: {
         headRefName: pr.headRefName,
         baseRefName: pr.baseRefName,
         html_url: pr.html_url,
+        body: details.body,
         ciPassed,
         hasHumanComments,
       });
     }
   }
+  } // end explicit-PR else
 
   if (eligible.length === 0) {
     console.log("No eligible agent PRs to review.");
@@ -220,7 +304,7 @@ export async function runReview(config: AgentConfig, options: {
       config,
       role: "reviewer",
       cwd: process.cwd(),
-      prompt: `Review this pull request:\n\n# PR #${pr.number}: ${pr.title}\nBase: ${pr.baseRefName}\nHead: ${pr.headRefName}\n\n# Diff\n${prDiff.slice(0, 24000)}\n\n${REVIEW_PROMPT}`,
+      prompt: `Review this pull request:\n\n# PR #${pr.number}: ${pr.title}\nBase: ${pr.baseRefName}\nHead: ${pr.headRefName}\n\n# PR description\n${pr.body ?? "(none)"}\n\n# Diff\n${prDiff.slice(0, 24000)}\n\n${REVIEW_PROMPT}${options.pr ? EXPLICIT_PR_NOTE : ""}`,
       tools: [], // Read-only — the reviewer only inspects the diff.
       systemAppend: "You are an autonomous code reviewer. Be skeptical. Review the diff only.",
       sessionName: `review-pr-${pr.number}`,
@@ -237,15 +321,17 @@ export async function runReview(config: AgentConfig, options: {
     console.log(`  Comment: ${commentUrl}`);
 
     const accepted = reviewAccepted(reviewer.text);
-    let merged = accepted && pr.ciPassed;
+    const autoMerge = shouldAutoMerge({ accepted, ciPassed: pr.ciPassed, explicitPr: Boolean(options.pr) });
+    let merged = false;
 
-    // ---- 4. Merge if accepted ---------------------------------------------
-    if (merged) {
+    // ---- 4. Merge (integration mode only; --pr NEVER auto-merges) ----------
+    if (autoMerge) {
       console.log("  ✅ Review passed + CI green — merging.");
       try {
         await client.mergePullRequest(pr.repository, pr.number, pr.headRefName);
         await client.addPullRequestLabel(pr.repository, pr.number, "agent:reviewed");
         console.log("  ✅ Merged successfully.");
+        merged = true;
         await logTimeline(config, { ts: new Date().toISOString(), event: "review", pr: pr.number, status: "ok", detail: "merged" });
         // Update the linked issue label.
         const linkedIssues = await client.getLinkedIssues(pr.repository, pr.number);
@@ -279,8 +365,18 @@ export async function runReview(config: AgentConfig, options: {
           `## Merge failed\n\n${message}\n\n_— democracy-delicious-agent_`
         );
         await logTimeline(config, { ts: new Date().toISOString(), event: "review", pr: pr.number, status: "fail", detail: `merge error: ${message}` });
-        merged = false;
       }
+    } else if (options.pr && accepted) {
+      // Explicit-PR mode: label and stop. For default-branch-targeting PRs
+      // the human merge IS the deploy gate (e.g. pizza-eagle merge →
+      // nightly update timer), so an accepted review never merges here.
+      console.log("  ✅ Review passed — labeled agent:reviewed; merge stays human-gated in --pr mode.");
+      await client.addPullRequestLabel(pr.repository, pr.number, "agent:reviewed");
+      await logTimeline(config, { ts: new Date().toISOString(), event: "review", pr: pr.number, status: "ok", detail: "accepted — explicit PR, no auto-merge" });
+    } else if (options.pr && !accepted) {
+      console.log("  ❌ Review rejected — labeled agent:feedback; see comment for findings.");
+      await client.addPullRequestLabel(pr.repository, pr.number, "agent:feedback");
+      await logTimeline(config, { ts: new Date().toISOString(), event: "review", pr: pr.number, status: "skip", detail: "review rejected (explicit PR)" });
     } else if (accepted && !pr.ciPassed) {
       console.log("  ⚠ Review passed but CI failed — not merging.");
       await logTimeline(config, { ts: new Date().toISOString(), event: "review", pr: pr.number, status: "skip", detail: "accepted but CI failed" });

@@ -200,6 +200,7 @@ export class GitHubClient {
     headRefName: string;
     baseRefName: string;
     html_url: string;
+    body: string | null;
     labels: Array<{ name: string }>;
   }> {
     const response = await this.request(
@@ -211,6 +212,7 @@ export class GitHubClient {
       head: { ref: string };
       base: { ref: string };
       html_url: string;
+      body: string | null;
       labels: Array<{ name: string }>;
     };
     return {
@@ -219,6 +221,7 @@ export class GitHubClient {
       headRefName: pr.head.ref,
       baseRefName: pr.base.ref,
       html_url: pr.html_url,
+      body: pr.body,
       labels: pr.labels,
     };
   }

@@ -132,6 +132,42 @@ Not an MVC framework — a web server framework, same category as Express but be
 - **Bull Board** is a React dashboard (mounted in the volunteer UI or as a protected route) showing all queues, job statuses, logs, retry/fail controls.
 - Replaces Zapier: no per-zap cost, full control over retry logic, agent-triggerable, runs in the VPC.
 - **AWS Step Functions + SQS was rejected:** more services, more glue code, no built-in dashboard, harder to debug.
+- **Worker scaling: per-run Fargate tasks, not a warm pool.** A BullMQ worker
+  is just a process — whether it runs as an always-on ECS service or a
+  per-run task is orthogonal to the queue choice. Decision: the dispatcher
+  (a queue consumer in the always-on Fastify task, or EventBridge → Lambda
+  → `RunTask`) launches one task per job (or small batch) with the job
+  class's task definition **and task role**, at `min(cap, backlog)`; each
+  worker is a stateless continuation executor that dies on completion.
+  Rationale:
+  - **Heterogeneity over pooling.** Agent runs (dd-agent), ordering loops,
+    and the dream shift want different images and different task roles —
+    per-run tasks make role isolation (the pizza-eagle#14 rule: never share
+    an instance profile across trust boundaries) the default, instead of N
+    warm services × N idle bills or one fat shared service that violates it.
+  - **The load is LLM-bound, not CPU-bound.** A worker spends its life
+    awaiting model responses; CPU target-tracking never fires. Queue depth
+    is the only honest signal — and with per-run launching, the dispatcher
+    *is* the autoscaler: no ASG, no custom CloudWatch metric plumbing.
+  - **Scale-to-zero is the seasonality story.** Idle months cost $0 compute;
+    an election burst is tens of concurrent per-run tasks for an afternoon.
+    Launch latency (~30-60s) is irrelevant at agent timescales.
+  - **Warm vs. per-run stays a cost/ops tradeoff, not an architectural
+    fork.** Workflow state lives in Postgres and jobs are idempotent
+    continuations (§6), so either shape executes the same state machine.
+    One warm task with BullMQ `concurrency: N` remains the trivial steady
+    state — most months the whole fleet is one task running a handful of
+    sessions.
+  - The same decision covers the **agent fleet**: dd-agent workers run as
+    per-run tasks with their own roles, dispatched from Slack through the
+    same queue — the coding agent and the ordering bot share this infra.
+    Single-task SPOF conditions from `architecture-review.md` (TaskCount
+    alarm + auto-restart) apply to any always-on component.
+  - **Resumability alternative considered:** AWS Lambda Durable Functions
+    (`@aws/durable-execution-sdk-js`, preview) — `waitForEvent` is the same
+    primitive as the `awaiting_human` row with a managed runtime; deferred
+    with a named revisit trigger — see `architecture-review.md` Q6
+    (late addition, 2026-11-19).
 
 ### 3.6 Auth: Clerk (or Auth0)
 
@@ -171,6 +207,62 @@ Benefits: shared types across frontend/backend, atomic commits, single CI pipeli
 - **TanStack Query** (frontend data cache) and **Drizzle** (backend ORM) don't interact — they live on opposite sides of the network. TanStack Query caches API responses in the browser; Drizzle generates SQL on the server.
 - **Socket.io** pushes events into TanStack Query's cache via `queryClient.setQueryData()` for optimistic real-time updates.
 
+### 3.9 Verification discipline (three rings, graded by blast radius)
+
+The platform moves money — donations, order budgets, spend caps — and its
+author is an agent fleet, so verification is a build requirement, not a
+testing afterthought. Discipline is graded: cheap rigor everywhere, heavy
+machinery only where money moves. (Source: TS formal-verification spec,
+Nov 2026 — `~/Projects/planning/typescript_formal_verification_spec_2026.md`
+on the ops laptop.)
+
+| Ring | Guard | Our surfaces |
+|---|---|---|
+| **Edge** — all I/O | Runtime schema parsing; "parse, don't validate" | Every webhook (Stripe, Twilio inbound/status, Slack Events, SightEngine), Socket.io frames, DB rows written by the legacy Lambda |
+| **Middle** — orchestration | State machines, model-checked | The ordering workflow state machine (§6): `awaiting_human` resolution, the budget gate, BullMQ continuation jobs |
+| **Core** — pure logic | PBT + integer money | Budget/spend math, Stripe event idempotency, guards ported from the Zapier fleet |
+
+**Baseline (every package, from Phase 1):**
+
+- tsconfig: `strict`, `noUncheckedIndexedAccess`,
+  `exactOptionalPropertyTypes`, `noImplicitReturns`,
+  `noFallthroughCasesInSwitch` in `tsconfig.base.json`.
+- Schemas at every boundary — Standard Schema engines (Zod or
+  ArkType/Typia); `as`-casts banned at I/O seams. Signature verification
+  (Twilio, Slack signing secret, Stripe webhook sig) stays — schemas
+  don't replace authentication.
+- Money is integer cents (`bigint`), never float; safe-integer range
+  asserted at the edges.
+- fast-check property-based testing on the properties this plan already
+  states as design rules: webhook idempotency (Stripe event ID, Twilio
+  `MessageSid`), state-machine transition legality, round-trip
+  serialization, budget conservation (`spend ≤ cap`). The
+  `ptp-zapier-workflows` fixtures port as regression seeds *alongside*
+  the generated cases, not instead of them.
+- Structure: pure logic in `packages/api/src/domain/core/*`, I/O in
+  `packages/api/src/infrastructure/*` — no DOM/HTTP/Node imports in core.
+
+**Where money moves (ordering pilot + donations path):**
+
+- The workflow state machine gets a **Quint** spec (TLA+ semantics,
+  TS-like syntax) before the TS implementation drifts: invariants — no
+  double-place, budget never negative, every `awaiting_human` row
+  resolvable or expiring, no orphaned continuations. `quint run`
+  simulation + Apalache symbolic check in CI on spec change.
+
+**Deferred, with named triggers:**
+
+- **Deductive proofs** (LemmaScript/Dafny, `coq-of-ts`, verified
+  extraction): budget math is cents arithmetic — PBT falsifies it as
+  well as a solver proves it, at jest cost, and proof annotations are a
+  maintenance liability for a volunteer org. Trigger: ordering grows
+  refunds, multi-restaurant negotiation, or genuinely branching math.
+- **Effect-TS across the API:** Fastify is chosen; typed-error modeling
+  gets adopted per-module inside the core if it pays, not as a paradigm.
+- **Model checking anything beyond the ordering machine** — including the
+  fleet's lock discipline: Postgres advisory locks + PBT cover it at
+  current scale.
+
 ---
 
 ## 4. Database: Keep PostgreSQL, Drop the Data API
@@ -185,11 +277,31 @@ Benefits: shared types across frontend/backend, atomic commits, single CI pipeli
 
 ## 5. Migration Path
 
-### Phase 1: Scaffold (low risk)
+> **Build order (2026-11-19):** the first deliverable is **the fleet, not a
+> feature.** Every phase below is executed by the agent fleet, so Phase 1
+> lands the fleet workflow itself — queues, dispatcher (a queue consumer in
+> the always-on task), per-run Fargate workers with per-class task roles, the
+> Postgres workflow state machine + audit/spend ledger — and every subsequent
+> phase is built *through* it. The workflow builds the platform; the platform
+> then runs the workflow.
+
+### Phase 1: Scaffold + fleet bootstrap (low risk)
 - Create monorepo with Fastify skeleton + Drizzle + shared DB connection.
 - Deploy to ECS behind a dev domain.
 - Set up Clerk auth.
 - Wire up Socket.io with Redis adapter.
+- Verification baseline (§3.9): strict tsconfig base + fast-check in CI +
+  schema parsing on every webhook, from the first route.
+- **Fleet bootstrap:** BullMQ queues + dispatcher consumer in this task;
+  per-run Fargate worker launcher (`RunTask` with per-class task def + role,
+  `min(cap, backlog)`); Postgres workflow state machine + audit/spend ledger.
+  Workers take dd-agent dispatches from day one — Phases 2–5 are
+  fleet-executed.
+- **Ops baseline (the `architecture-review.md` Q3 conditions — before any
+  fleet execution, since the fleet spends unattended):** TaskCount dead-man
+  alarm → Slack, tested RDS backup/restore, Secrets Manager for all
+  third-party keys, CI deploy pipeline with expand/contract migration gates,
+  and the election freeze-window policy.
 
 ### Phase 2: Volunteer Dashboard MVP
 - Build React volunteer views (replacing Retool).
@@ -201,6 +313,8 @@ Benefits: shared types across frontend/backend, atomic commits, single CI pipeli
 - Build BullMQ job pipelines for order → report → truck → order lifecycle.
 - Webhook endpoints for Stripe, SightEngine (move from Lambda).
 - Bull Board mounted at `/admin/queues`.
+- PBT on the ported guards + webhook idempotency (§3.9); fixtures port as
+  seeds alongside the generated cases.
 
 ### Phase 4: Migrate Public API Routes (route by route)
 - Read-only GETs first: `/totals`, `/orders`, `/locations`, `/trucks`.
@@ -243,7 +357,7 @@ Volunteer sees live updates in dashboard
 
 ### Human-in-the-loop
 
-When the agent hits ambiguity (multiple restaurants, budget trade-off), it sends a WebSocket prompt to the volunteer, waits for a response via a POST endpoint, then continues. This is a `Promise` that resolves when the volunteer clicks — trivial with BullMQ's long-running jobs.
+When the agent hits ambiguity (multiple restaurants, budget trade-off), it writes an `awaiting_human` row to the workflow state machine in Postgres and ends the job; a volunteer response (dashboard click or Slack) flips the row and re-enqueues the continuation. No worker slot is held while a human decides, and a deploy or crash loses nothing — state is in Postgres (`architecture-review.md` Q6; the held-`Promise` version of this design was disqualified there).
 
 ### Why this works here (and not on Lambda)
 
@@ -251,13 +365,13 @@ When the agent hits ambiguity (multiple restaurants, budget trade-off), it sends
 |---|---|---|
 | Long-running agent loop | Impossible (30s timeout) | Trivial |
 | Streaming progress to UI | Separate WebSocket infra + DynamoDB | Socket.io in-process |
-| Human-in-the-loop | Step Functions activity tasks | Promise resolved by HTTP callback |
+| Human-in-the-loop | Step Functions activity tasks | `awaiting_human` row + continuation job (§ "Human-in-the-loop") |
 | Retry + backoff | Step Functions config | One line: `attempts: 5, backoff: ...` |
 | Dashboard visibility | Custom CloudWatch dashboard | Bull Board + WebSocket push |
 
 ### Future additions the architecture accommodates
 - Agent negotiates with restaurants directly.
-- Multiple concurrent agent workers (scale ECS tasks or BullMQ concurrency).
+- Multiple concurrent agent workers (per-run Fargate tasks — §3.5).
 - Agent learns from past orders (store decisions in Postgres, few-shot prompt).
 - Cost tracking + budget enforcement (Drizzle query before placing).
 - Post-order follow-up (scheduled BullMQ job — did the food arrive?).

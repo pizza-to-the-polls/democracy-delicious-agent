@@ -163,6 +163,11 @@ Not an MVC framework — a web server framework, same category as Express but be
     same queue — the coding agent and the ordering bot share this infra.
     Single-task SPOF conditions from `architecture-review.md` (TaskCount
     alarm + auto-restart) apply to any always-on component.
+  - **Resumability alternative considered:** AWS Lambda Durable Functions
+    (`@aws/durable-execution-sdk-js`, preview) — `waitForEvent` is the same
+    primitive as the `awaiting_human` row with a managed runtime; deferred
+    with a named revisit trigger — see `architecture-review.md` Q6
+    (late addition, 2026-11-19).
 
 ### 3.6 Auth: Clerk (or Auth0)
 
@@ -272,13 +277,31 @@ on the ops laptop.)
 
 ## 5. Migration Path
 
-### Phase 1: Scaffold (low risk)
+> **Build order (2026-11-19):** the first deliverable is **the fleet, not a
+> feature.** Every phase below is executed by the agent fleet, so Phase 1
+> lands the fleet workflow itself — queues, dispatcher (a queue consumer in
+> the always-on task), per-run Fargate workers with per-class task roles, the
+> Postgres workflow state machine + audit/spend ledger — and every subsequent
+> phase is built *through* it. The workflow builds the platform; the platform
+> then runs the workflow.
+
+### Phase 1: Scaffold + fleet bootstrap (low risk)
 - Create monorepo with Fastify skeleton + Drizzle + shared DB connection.
 - Deploy to ECS behind a dev domain.
 - Set up Clerk auth.
 - Wire up Socket.io with Redis adapter.
 - Verification baseline (§3.9): strict tsconfig base + fast-check in CI +
   schema parsing on every webhook, from the first route.
+- **Fleet bootstrap:** BullMQ queues + dispatcher consumer in this task;
+  per-run Fargate worker launcher (`RunTask` with per-class task def + role,
+  `min(cap, backlog)`); Postgres workflow state machine + audit/spend ledger.
+  Workers take dd-agent dispatches from day one — Phases 2–5 are
+  fleet-executed.
+- **Ops baseline (the `architecture-review.md` Q3 conditions — before any
+  fleet execution, since the fleet spends unattended):** TaskCount dead-man
+  alarm → Slack, tested RDS backup/restore, Secrets Manager for all
+  third-party keys, CI deploy pipeline with expand/contract migration gates,
+  and the election freeze-window policy.
 
 ### Phase 2: Volunteer Dashboard MVP
 - Build React volunteer views (replacing Retool).

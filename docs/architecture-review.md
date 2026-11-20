@@ -98,6 +98,38 @@ Reasoning against each alternative:
 
 Design rules that make this safe regardless: every transition idempotent; every job carries the workflow ID; budget enforcement checked in Postgres *before* any spend; and the LLM loop's tool calls logged for audit.
 
+**Late addition (2026-11-19): AWS Lambda Durable Functions — considered, deferred with a named trigger.**
+A post-review proposal (Gemini) put durable Lambda workflows (`@aws/durable-execution-sdk-js`,
+preview since re:Invent 2025; requires Node 22+ — `pizzabase-prod` runs
+`nodejs22.x`, so compatible) in place of our continuation jobs: `waitForEvent`
+is the same primitive as our `awaiting_human` row — suspend, ~$0 while a
+human decides, resume on an external event — with a managed runtime instead
+of hand-rolled continuation jobs. Deferred, not rejected:
+
+- **Second system of record.** Durable state is service-managed
+  (DynamoDB-backed); our rule is *"Postgres is the source of truth for every
+  workflow."* Everything built to read workflow state — dashboard, audit
+  log, Bull Board, dream shift — reads Postgres. Adopting it means dual-write
+  or a sync layer on the one flow where fidelity matters most (money).
+- **Scale-to-zero buys nothing today.** The always-on Fastify task exists for
+  Socket.io + the dashboard API regardless, and the dispatcher rides it free;
+  per-run agent workers are already scale-to-zero Fargate. Only orchestration
+  would move, and it is the cheapest component.
+- **Maturity.** Preview SDK; the Durable-telemetry exporter the same proposal
+  leans on is dated "late 2026." Same labor-model argument as Step Functions:
+  the fleet extends boring typed TS in-repo more safely than resume semantics
+  it can't read.
+
+**Revisit when:** waits grow past the once-per-job pattern to genuinely
+multi-day/multi-month scale (Step Functions and Durable Functions both become
+competitive there), or the always-on task ever goes away, or the SDK reaches GA
+with the telemetry exporter proven in production elsewhere. The rest of the
+Gemini proposal changes nothing: sandboxed per-run execution is the
+§3.5 per-class-task-role decision (architecture-recommendation.md, PR #29) —
+we decline third-party sandboxes (Modal) over source leaving our AWS account;
+EventBridge/SQS routing is already in the plan; and its "stick with Aurora
+Serverless" verdict repeats the exact choice Q4 reversed on cost.
+
 ---
 
 ## Factual Corrections
